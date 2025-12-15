@@ -22,7 +22,7 @@ Installation:
 1) git clone --recursive https://github.com/bravooscarromeo/simple-lora-trainer.git
 2) cd path/to/Lora_Trainer
 3) pip install -r requirements.txt
-4) pip install torch
+4) pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cuNNN (Specify version in for NNN)
 ###
 Training Backend
 This app uses sd-scripts.
