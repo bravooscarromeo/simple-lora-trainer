@@ -46,6 +46,6 @@ Usage
 2) Configure settings
 3) Click Train
 ----------------------------
-The UI includes:
-Warnings for risky settings
-Hard stops for invalid configurations
+- The UI includes:
+- Warnings for risky settings
+- Hard stops for invalid configurations
