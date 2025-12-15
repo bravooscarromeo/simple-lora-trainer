@@ -36,13 +36,13 @@ You must install its dependencies manually:
 10) python app.py
 11) hosted on port 5000 - ctrl + click link in terminal
 ----------------------------
-Optional - 
-xFormers (must match your PyTorch + CUDA versions)
+- Optional - 
+- xFormers (must match your PyTorch + CUDA versions)
 -----------------------------
 Usage
 1) Create a project (folder defaults to home/yourusername/lora_project
-!! Place your image folders inside the project’s dataset/ directory
-!! Do not place images directly in dataset/ — use a subfolder per project
+- !! Place your image folders inside the project’s dataset/ directory
+- !! Do not place images directly in dataset/ — use a subfolder per project
 2) Configure settings
 3) Click Train
 ----------------------------
