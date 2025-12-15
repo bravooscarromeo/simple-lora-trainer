@@ -8,7 +8,8 @@
 - This project is considered feature-complete.
 - Only bug fixes will be added.
 ----------------------------
- - System Requirements:
+System Requirements:
+###
 1) Linux (Ubuntu recommended)
 2) NVIDIA GPU (required for training)
 3) CUDA compatible with your PyTorch install
@@ -18,14 +19,15 @@
 - Conda environment strongly suggested
 ----------------------------
 Installation:
+###
 1) git clone --recursive https://github.com/bravooscarromeo/simple-lora-trainer.git
 2) cd path/to/Lora_Trainer
 3) pip install -r requirements.txt
 4) pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cuNNN (Specify version in for NNN)
 ###
-Training Backend
+- Training Backend:
 This app uses sd-scripts.
-You must install its dependencies manually:
+You must install its dependencies manually.
 ###
 5) cd path/to/Lora_Trainer/trainer/sd-scripts
 6) pip install -r requirements.txt
@@ -33,17 +35,20 @@ You must install its dependencies manually:
 8) accelerate config
 9) cd path/to/Lora_Trainer
 10) python app.py
-11) hosted on port 5000 - ctrl + click link in terminal
+11) hosted on port 5000 - ctrl + click the link in terminal
 ----------------------------
-- Optional - 
+Optional - 
+###
 - xFormers (must match your PyTorch + CUDA versions)
 -----------------------------
-Usage
+Usage - 
+###
 1) Create a project (folder defaults to home/yourusername/lora_project
-- !! Do not place images directly in dataset/ — use a subfolder within the dataset folder - within the UI leave path as default 
+- !! Do not place images directly in dataset - use a subfolder within the dataset folder - within the UI leave path as default 
 2) Configure settings
 3) Click Train
 ----------------------------
-- The UI includes:
+The UI includes:
+###
 - Warnings for risky settings
 - Hard stops for invalid configurations
