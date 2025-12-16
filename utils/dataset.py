@@ -1,4 +1,6 @@
 from utils.ensure_fields import parse_int
+from pathlib import Path
+import re
 
 def apply(form, config, issues):
     """
@@ -70,3 +72,21 @@ def apply(form, config, issues):
                 "Fix: lower resolution or switch to SDXL."
             )
         })
+
+def get_dataset_root(project_name: str) -> Path:
+    # /home/<user>/lora_projects/<ProjectName>/dataset
+    return Path.home() / "lora_projects" / project_name / "dataset"
+
+def get_repeat_from_dataset_root(dataset_root: Path) -> int | None:
+    if not dataset_root.exists():
+        return None
+
+    for child in dataset_root.iterdir():
+        if not child.is_dir():
+            continue
+
+        m = re.match(r"^(\d+)_", child.name)
+        if m:
+            return int(m.group(1))
+
+    return None
