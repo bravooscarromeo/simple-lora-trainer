@@ -24,8 +24,8 @@ def build_default_config(project_name: str):
             "captions": {
                 "extension": ".txt",
                 "first_word_memorize": False,
-                "prepend_token": None,
-                "append_token": None
+                "prepend_token": "",
+                "append_token": ""
             },
             "cache_latents": True,
             "bucket": {
@@ -39,6 +39,7 @@ def build_default_config(project_name: str):
         "training": {
             "epochs": 10,
             "save_every_epochs": 1,
+            "do_inference": True, 
             "gradient_accumulation": 1,
             "conditioning": {
                 "clip_skip": 1
@@ -46,7 +47,6 @@ def build_default_config(project_name: str):
             "learning_rates": {
                 "unet": 2e-05,
                 "clip": 2e-05,
-                "t5": 0
             }
         },
 
@@ -55,7 +55,6 @@ def build_default_config(project_name: str):
             "alpha": 64,
             "dropout": 0.0,
             "target_modules": "auto",
-            "bias": "none"
         },
 
         "optimizer": {
@@ -91,8 +90,6 @@ def build_default_config(project_name: str):
         },
 
         "output": {
-            "output_dir": "output/",
-            "save_every_epochs": 1,
             "save_state": False,
             "save_format": "safetensors"
         }

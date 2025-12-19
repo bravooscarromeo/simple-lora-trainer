@@ -17,10 +17,13 @@ def apply(form, config, issues):
     if resolution is not None:
         dataset["resolution"] = resolution
 
-
     batch = parse_int(form, "batch_size", issues, min_value=1)
     if batch is not None:
         dataset["batch_size"] = batch
+
+    repeats = parse_int(form, "repeats", issues, min_value=1)
+    if repeats is not None:
+        dataset["repeats"] = repeats
 
     dataset["shuffle"] = "shuffle" in form
     dataset["cache_latents"] = "cache_latents" in form
@@ -69,21 +72,3 @@ def apply(form, config, issues):
                 "Fix: lower resolution or switch to SDXL."
             )
         })
-
-def get_dataset_root(project_name: str) -> Path:
-    # /home/<user>/lora_projects/<ProjectName>/dataset
-    return Path.home() / "lora_projects" / project_name / "dataset"
-
-def get_repeat_from_dataset_root(dataset_root: Path) -> int | None:
-    if not dataset_root.exists():
-        return None
-
-    for child in dataset_root.iterdir():
-        if not child.is_dir():
-            continue
-
-        m = re.match(r"^(\d+)_", child.name)
-        if m:
-            return int(m.group(1))
-
-    return None

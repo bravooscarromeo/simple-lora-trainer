@@ -24,5 +24,3 @@ def apply(form, config, issues):
     if "lora_target_modules" in form:
         lora["target_modules"] = form["lora_target_modules"]
 
-    if "lora_bias" in form:
-        lora["bias"] = form["lora_bias"]

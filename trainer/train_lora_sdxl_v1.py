@@ -1,9 +1,9 @@
 import os
-import json
 from pathlib import Path
 import argparse
 from dataclasses import dataclass
 from typing import List, Tuple
+import json
 from collections import Counter
 
 import torch
@@ -13,16 +13,7 @@ import torch.nn.functional as F
 from PIL import Image
 from torchvision import transforms
 
-from diffusers import (
-    UNet2DConditionModel,
-    AutoencoderKL,
-    DDPMScheduler,
-)
-from transformers import (
-    CLIPTokenizer,
-    CLIPTextModel,
-)
-
+from diffusers import StableDiffusionXLPipeline, DDPMScheduler
 from safetensors.torch import save_file
 from diffusers.optimization import get_scheduler
 
@@ -44,7 +35,7 @@ class TrainConfig:
     output: str
     gradient_checkpointing: bool = False
     grad_accum_steps: int = 1
-    repeats: int = 1 
+    repeats: int = 1
     save_every_epochs: int = 0
     seed: int = 0
     log_every: int = 10
@@ -76,19 +67,32 @@ class TrainConfig:
     use_xformers: bool = False
     cpu_offload: bool = False
 
+def parse_caption_tags(text: str) -> list[str]:
+    parts = [t.strip() for t in text.split(",")]
+    return [p for p in parts if p]
+
+
+def build_lora_metadata(cfg: TrainConfig, tag_counter: Counter, trained_words: str) -> dict[str, str]:
+    tag_payload = {
+        "dataset": dict(tag_counter)
+    }
+
+    return {
+        "ss_tag_frequency": json.dumps(tag_payload, ensure_ascii=False),
+        "ss_trained_words": trained_words,
+        "ss_network_dim": str(cfg.lora_rank),
+        "ss_network_alpha": str(cfg.lora_alpha),
+    }
+
 def log(msg: str) -> None:
     print(msg, flush=True)
 
 def resolve_dtype(precision: str) -> torch.dtype:
-    if precision == "fp16":
+    if precision in ("fp16", "float16"):
         return torch.float16
-    if precision == "bf16":
+    if precision in ("bf16", "bfloat16"):
         return torch.bfloat16
     return torch.float32
-
-def parse_caption_tags(text: str) -> list[str]:
-    parts = [t.strip() for t in text.split(",")]
-    return [p for p in parts if p]
 
 def log_train_config(cfg: TrainConfig) -> None:
     log("===== TRAIN CONFIG =====")
@@ -116,7 +120,6 @@ def log_train_config(cfg: TrainConfig) -> None:
     log(f"lora_rank={cfg.lora_rank}")
     log(f"lora_alpha={cfg.lora_alpha}")
     log(f"lora_dropout={cfg.lora_dropout}")
-    log(f"clip_skip={cfg.clip_skip}")
     log(f"train_clip={cfg.clip_lr > 0}")
     log(f"cache_latents={cfg.cache_latents}")
     log(f"bucket_enabled={cfg.bucket_enabled}")
@@ -125,7 +128,7 @@ def log_train_config(cfg: TrainConfig) -> None:
     log(f"prepend_token={cfg.prepend_token}")
     log(f"append_token={cfg.append_token}")
     log(f"memorize_first_token={cfg.memorize_first_token}")
-    log(f"do_inference={cfg.do_inference}")
+    log(f"do_inference={cfg.do_inference} (ignored for now)")
     log("===== END CONFIG =====")
 
 def load_dataset(dataset_dir: str, caption_ext: str) -> List[Tuple[str, str]]:
@@ -133,10 +136,7 @@ def load_dataset(dataset_dir: str, caption_ext: str) -> List[Tuple[str, str]]:
     for name in sorted(os.listdir(dataset_dir)):
         if name.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
             img_path = os.path.join(dataset_dir, name)
-            cap_path = os.path.join(
-                dataset_dir,
-                os.path.splitext(name)[0] + caption_ext
-            )
+            cap_path = os.path.join(dataset_dir, os.path.splitext(name)[0] + caption_ext)
             if not os.path.exists(cap_path):
                 raise RuntimeError(f"Missing caption for {name}")
             items.append((img_path, cap_path))
@@ -149,8 +149,13 @@ def image_transform(res: int):
         transforms.Resize(res, interpolation=transforms.InterpolationMode.BILINEAR),
         transforms.CenterCrop(res),
         transforms.ToTensor(),
-        transforms.Normalize([0.5]*3, [0.5]*3),
+        transforms.Normalize([0.5] * 3, [0.5] * 3),
     ])
+
+def pick_bucket_resolution(w: int, h: int, cfg: TrainConfig) -> int:
+    base = min(max(max(w, h), cfg.bucket_min_res), cfg.bucket_max_res)
+    step = cfg.bucket_step
+    return (base // step) * step
 
 DEFAULT_TARGET_MODULES = ["to_q", "to_k", "to_v", "to_out.0"]
 DEFAULT_TE_TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "out_proj"]
@@ -188,58 +193,51 @@ def parse_target_modules(s: str) -> list[str] | None:
     out = [t for t in raw if t]
     return out or None
 
-def inject_lora(unet: nn.Module, rank: int, alpha: float, dropout: float, targets: list[str]):
+def inject_lora(unet: nn.Module, rank: int, alpha: float, dropout: float, targets: list[str]) -> int:
     replaced = 0
-    params = []
     modules = dict(unet.named_modules())
 
     for name, mod in list(modules.items()):
         if isinstance(mod, nn.Linear) and any(name.endswith(suf) for suf in targets):
             parent_name, child = name.rsplit(".", 1)
             parent = modules[parent_name]
-
-            lora = LoRALinear(mod, rank, alpha, dropout)
-            setattr(parent, child, lora)
-
-            params.extend([lora.A, lora.B])
+            setattr(parent, child, LoRALinear(mod, rank, alpha, dropout))
             replaced += 1
 
     if replaced == 0:
-        raise RuntimeError("Injected 0 LoRA layers")
+        raise RuntimeError("Injected 0 LoRA layers (SDXL module names may differ)")
 
-    return replaced, params
+    return replaced
 
-def inject_lora_text_encoder(text_encoder: nn.Module, rank: int, alpha: float, dropout: float, targets: list[str]):
+def inject_lora_text_encoder(te: nn.Module, rank: int, alpha: float, dropout: float, targets: list[str]):
     replaced = 0
-    params = []
-    modules = dict(text_encoder.named_modules())
+    modules = dict(te.named_modules())
 
     for name, mod in list(modules.items()):
-        if isinstance(mod, nn.Linear) and any(name.endswith(s) for s in targets):
+        if isinstance(mod, nn.Linear) and any(name.endswith(suf) for suf in targets):
             parent_name, child = name.rsplit(".", 1)
             parent = modules[parent_name]
-
-            lora = LoRALinear(mod, rank, alpha, dropout)
-            setattr(parent, child, lora)
-
-            params.extend([lora.A, lora.B])
+            setattr(parent, child, LoRALinear(mod, rank, alpha, dropout))
             replaced += 1
 
     if replaced == 0:
         raise RuntimeError("Injected 0 text encoder LoRA layers")
 
+    params = list(lora_parameters(te))
     return replaced, params
 
-def lora_parameters(module: nn.Module):
-    for m in module.modules():
+def lora_parameters(unet: nn.Module):
+    for m in unet.modules():
         if isinstance(m, LoRALinear):
             yield m.A
             yield m.B
 
-def save_lora(
+
+def save_lora_sdxl(
     *,
     unet: nn.Module,
     text_encoder: nn.Module | None,
+    text_encoder_2: nn.Module | None,
     path: str,
     metadata: dict | None = None,
 ):
@@ -264,7 +262,22 @@ def save_lora(
             if not isinstance(m, LoRALinear):
                 continue
 
-            key = "lora_te_" + name.replace(".", "_")
+            key = "lora_te1_" + name.replace(".", "_")
+
+            tensors[f"{key}.lora_down.weight"] = (
+                m.A.T.detach().float().contiguous().cpu()
+            )
+            tensors[f"{key}.lora_up.weight"] = (
+                m.B.T.detach().float().contiguous().cpu()
+            )
+            tensors[f"{key}.alpha"] = torch.tensor(m.alpha)
+
+    if text_encoder_2 is not None:
+        for name, m in text_encoder_2.named_modules():
+            if not isinstance(m, LoRALinear):
+                continue
+
+            key = "lora_te2_" + name.replace(".", "_")
 
             tensors[f"{key}.lora_down.weight"] = (
                 m.A.T.detach().float().contiguous().cpu()
@@ -280,139 +293,53 @@ def save_lora(
         metadata=metadata or {}
     )
 
-def build_lora_metadata(cfg: TrainConfig, tag_counter: Counter, trained_words: str) -> dict[str, str]:
-    tag_payload = {
-        "dataset": dict(tag_counter)
-    }
-
-    return {
-        "ss_tag_frequency": json.dumps(tag_payload, ensure_ascii=False),
-        "ss_trained_words": trained_words,
-        "ss_network_dim": str(cfg.lora_rank),
-        "ss_network_alpha": str(cfg.lora_alpha),
-    }
-
-def set_lora_scale(unet: nn.Module, scale: float) -> None:
-    for m in unet.modules():
-        if isinstance(m, LoRALinear):
-            m.lora_scale = float(scale)
-
 @torch.no_grad()
-def decode_latents_to_pil(vae: AutoencoderKL, latents: torch.Tensor):
-    latents = latents / 0.18215
-    image = vae.decode(latents).sample
-    image = (image / 2 + 0.5).clamp(0, 1)
-    image = image.permute(0, 2, 3, 1).cpu().numpy()
-    images = []
-    for i in range(image.shape[0]):
-        images.append(Image.fromarray((image[i] * 255).astype("uint8")))
-    return images
-
-@torch.no_grad()
-def run_inference_preview_in_memory(
-    *,
-    unet: UNet2DConditionModel,
-    vae: AutoencoderKL,
-    text_encoder: CLIPTextModel,
-    tokenizer: CLIPTokenizer,
-    scheduler: DDPMScheduler,
-    output_dir: Path,
-    prompt: str,
-    steps: int,
-    num_images: int,
-    seed: int,
+def encode_prompt_sdxl(
+    pipe: StableDiffusionXLPipeline,
+    prompts: list[str],
     device: torch.device,
     dtype: torch.dtype,
-    clip_skip: int,
-    guidance_scale: float = 7.5,
 ):
+    out = pipe.encode_prompt(
+        prompt=prompts,
+        prompt_2=prompts,
+        device=device,
+        num_images_per_prompt=1,
+        do_classifier_free_guidance=False,
+    )
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    unet.eval()
-    vae.eval()
-    text_encoder.eval()
-
-    scheduler.set_timesteps(steps, device=device)
-
-    text_in = tokenizer(
-        [prompt],
-        padding="max_length",
-        truncation=True,
-        max_length=77,
-        return_tensors="pt",
-    ).input_ids.to(device)
-
-    uncond_in = tokenizer(
-        [""],
-        padding="max_length",
-        truncation=True,
-        max_length=77,
-        return_tensors="pt",
-    ).input_ids.to(device)
-    
-    if clip_skip > 0:
-        cond_out = text_encoder(text_in, output_hidden_states=True)
-        uncond_out = text_encoder(uncond_in, output_hidden_states=True)
-        idx = -(clip_skip + 1)
-        cond = cond_out.hidden_states[idx]
-        uncond = uncond_out.hidden_states[idx]
+    if isinstance(out, tuple):
+        if len(out) == 2:
+            prompt_embeds, pooled = out
+        elif len(out) == 3:
+            prompt_embeds, pooled, _ = out
+        elif len(out) >= 4:
+            prompt_embeds = out[0]
+            pooled = out[2]
+        else:
+            raise RuntimeError(f"Unexpected encode_prompt return length: {len(out)}")
     else:
-        cond = text_encoder(text_in)[0]
-        uncond = text_encoder(uncond_in)[0]
+        raise RuntimeError("encode_prompt did not return a tuple")
 
+    return prompt_embeds.to(dtype), pooled.to(dtype)
 
-    h = w = 512
-    latent_h = h // 8
-    latent_w = w // 8
+def make_add_time_ids(batch_size: int, bucket_res: int, device: torch.device, dtype: torch.dtype):
+    h = w = int(bucket_res)
+    t = torch.tensor([h, w, 0, 0, h, w], device=device, dtype=dtype)
+    return t.unsqueeze(0).repeat(batch_size, 1)
 
-    for i in range(num_images):
-        gen = torch.Generator(device=device).manual_seed(seed + i)
+def load_sdxl_pipeline(cfg: TrainConfig, device: torch.device, dtype: torch.dtype) -> StableDiffusionXLPipeline:
+    pipe = StableDiffusionXLPipeline.from_pretrained(cfg.base_model, torch_dtype=dtype)
+    pipe.to(device)
+    pipe.set_progress_bar_config(disable=True)
 
-        latents = torch.randn(
-            (1, 4, latent_h, latent_w),
-            generator=gen,
-            device=device,
-            dtype=dtype,
-        )
-
-        for t in scheduler.timesteps:
-            latent_in = latents
-            if hasattr(scheduler, "scale_model_input"):
-                latent_in = scheduler.scale_model_input(latent_in, t)
-
-            noise_uncond = unet(latent_in, t, encoder_hidden_states=uncond).sample
-            noise_text = unet(latent_in, t, encoder_hidden_states=cond).sample
-            noise = noise_uncond + guidance_scale * (noise_text - noise_uncond)
-
-            latents = scheduler.step(noise, t, latents).prev_sample
-
-        imgs = decode_latents_to_pil(vae, latents)
-        imgs[0].save(output_dir / f"img_{i}.png")
-
-def load_sd_models(cfg: TrainConfig, device, dtype):
-    tokenizer = CLIPTokenizer.from_pretrained(cfg.base_model, subfolder="tokenizer")
-    text_encoder = CLIPTextModel.from_pretrained(
-        cfg.base_model, subfolder="text_encoder", torch_dtype=dtype
-    ).to(device)
-    vae = AutoencoderKL.from_pretrained(
-        cfg.base_model, subfolder="vae", torch_dtype=dtype
-    ).to(device)
-    unet = UNet2DConditionModel.from_pretrained(
-        cfg.base_model, subfolder="unet", torch_dtype=dtype
-    ).to(device)
-    scheduler = DDPMScheduler.from_pretrained(cfg.base_model, subfolder="scheduler")
     if cfg.gradient_checkpointing:
-        unet.enable_gradient_checkpointing()
+        pipe.unet.enable_gradient_checkpointing()
         log("STATUS gradient_checkpointing=ENABLED")
     else:
         log("STATUS gradient_checkpointing=DISABLED")
-    return tokenizer, text_encoder, vae, unet, scheduler
 
-def pick_bucket_resolution(w: int, h: int, cfg: TrainConfig) -> int:
-    base = min(max(max(w, h), cfg.bucket_min_res), cfg.bucket_max_res)
-    step = cfg.bucket_step
-    return (base // step) * step
+    return pipe
 
 def train(cfg: TrainConfig):
     torch.manual_seed(cfg.seed)
@@ -442,6 +369,11 @@ def train(cfg: TrainConfig):
     for _, cap_path in dataset:
         text = open(cap_path, "r", encoding="utf-8").read().strip()
 
+        if cfg.memorize_first_token:
+            first = text.split(",")[0].strip()
+            if first:
+                text = f"{first}, {text}"
+
         if cfg.prepend_token:
             text = f"{cfg.prepend_token}, {text}"
         if cfg.append_token:
@@ -470,27 +402,22 @@ def train(cfg: TrainConfig):
     elif cfg.cache_latents:
         log("STATUS cache_latents=ENABLED")
 
-
-
     if cfg.bucket_enabled:
         log(
-            f"STATUS bucket=ENABLED "
-            f"min={cfg.bucket_min_res} "
-            f"max={cfg.bucket_max_res} "
-            f"step={cfg.bucket_step}"
+            f"STATUS bucket=ENABLED min={cfg.bucket_min_res} max={cfg.bucket_max_res} step={cfg.bucket_step}"
         )
     else:
         log("STATUS bucket=DISABLED")
 
-    if cfg.model_type != "sd":
-        raise RuntimeError("train_lora_v1.py currently supports only --model_type sd (SD 1.x)")
+    if cfg.model_type != "sdxl":
+        raise RuntimeError("train_lora_sdxl_v1.py supports only --model_type sdxl")
 
     log("STATUS loading_models")
-    tokenizer, text_encoder, vae, unet, scheduler = load_sd_models(cfg, device, dtype)
+    pipe = load_sdxl_pipeline(cfg, device, dtype)
 
     if cfg.use_xformers:
         try:
-            unet.enable_xformers_memory_efficient_attention()
+            pipe.enable_xformers_memory_efficient_attention()
             log("STATUS xformers=ENABLED")
         except Exception as e:
             raise RuntimeError(
@@ -500,15 +427,26 @@ def train(cfg: TrainConfig):
     else:
         log("STATUS xformers=DISABLED")
 
-    train_clip = (cfg.clip_lr is not None) and (float(cfg.clip_lr) > 0.0)
+    unet = pipe.unet
+    vae = pipe.vae
+
+    text_encoder = pipe.text_encoder
+    text_encoder_2 = pipe.text_encoder_2
+    train_clip = cfg.clip_lr is not None and float(cfg.clip_lr) > 0.0
     log(f"STATUS clip_train={train_clip} clip_lr={cfg.clip_lr}")
+
+    scheduler = DDPMScheduler.from_pretrained(cfg.base_model, subfolder="scheduler")
 
     vae.eval()
     for p in vae.parameters():
         p.requires_grad_(False)
 
-    text_encoder.eval()
-    for p in text_encoder.parameters():
+    pipe.text_encoder.eval()
+    for p in pipe.text_encoder.parameters():
+        p.requires_grad_(False)
+
+    pipe.text_encoder_2.eval()
+    for p in pipe.text_encoder_2.parameters():
         p.requires_grad_(False)
 
     unet.eval()
@@ -516,14 +454,8 @@ def train(cfg: TrainConfig):
         p.requires_grad_(False)
 
     unet_targets = cfg.target_modules or DEFAULT_TARGET_MODULES
-
-    unet_injected, unet_lora_params = inject_lora(
-        unet,
-        cfg.lora_rank,
-        cfg.lora_alpha,
-        cfg.lora_dropout,
-        unet_targets,
-    )
+    unet_injected = inject_lora(unet, cfg.lora_rank, cfg.lora_alpha, cfg.lora_dropout, unet_targets)
+    unet_lora_params = list(lora_parameters(unet))
 
     log(f"STATUS lora_targets={','.join(unet_targets)} matched={unet_injected}")
     log(f"STATUS lora_layers={unet_injected}")
@@ -532,29 +464,26 @@ def train(cfg: TrainConfig):
         if isinstance(m, LoRALinear):
             m.lora_scale = 1.0
 
-    te_lora_params = []
+    te1_lora_params = []
+    te2_lora_params = []
 
     if train_clip:
         te_targets = DEFAULT_TE_TARGET_MODULES
 
-        te_injected, te_lora_params = inject_lora_text_encoder(
-            text_encoder,
-            cfg.lora_rank,
-            cfg.lora_alpha,
-            cfg.lora_dropout,
-            te_targets,
+        te1_injected, te1_lora_params = inject_lora_text_encoder(
+            text_encoder, cfg.lora_rank, cfg.lora_alpha, cfg.lora_dropout, te_targets
+        )
+        te2_injected, te2_lora_params = inject_lora_text_encoder(
+            text_encoder_2, cfg.lora_rank, cfg.lora_alpha, cfg.lora_dropout, te_targets
         )
 
-        log(f"STATUS te_lora_targets={','.join(te_targets)} matched={te_injected}")
+        log(f"STATUS te1_lora_targets={','.join(te_targets)} matched={te1_injected}")
+        log(f"STATUS te2_lora_targets={','.join(te_targets)} matched={te2_injected}")
 
-    param_groups = [
-        {"params": unet_lora_params, "lr": cfg.unet_lr}
-    ]
-
+    param_groups = [{"params": unet_lora_params, "lr": cfg.unet_lr}]
     if train_clip:
-        param_groups.append(
-            {"params": te_lora_params, "lr": cfg.clip_lr}
-        )
+        param_groups.append({"params": te1_lora_params, "lr": cfg.clip_lr})
+        param_groups.append({"params": te2_lora_params, "lr": cfg.clip_lr})
 
     if cfg.optimizer == "adamw":
         optimizer = torch.optim.AdamW(
@@ -563,7 +492,6 @@ def train(cfg: TrainConfig):
             eps=cfg.epsilon,
             weight_decay=cfg.weight_decay,
         )
-
     elif cfg.optimizer == "adam":
         optimizer = torch.optim.Adam(
             param_groups,
@@ -571,7 +499,6 @@ def train(cfg: TrainConfig):
             eps=cfg.epsilon,
             weight_decay=cfg.weight_decay,
         )
-
     elif cfg.optimizer == "sgd":
         optimizer = torch.optim.SGD(
             param_groups,
@@ -579,7 +506,6 @@ def train(cfg: TrainConfig):
             nesterov=cfg.nesterov,
             weight_decay=cfg.weight_decay,
         )
-
     else:
         raise ValueError(f"Unsupported optimizer: {cfg.optimizer}")
 
@@ -597,15 +523,11 @@ def train(cfg: TrainConfig):
         num_training_steps=num_training_steps,
         num_cycles=cfg.num_cycles,
     )
-    
-    log(
-        f"STATUS training_plan "
-        f"steps_per_epoch={steps_per_epoch} "
-        f"updates_per_epoch={updates_per_epoch} "
-        f"total_updates={num_training_steps}"
-    )
 
-    tfm = image_transform(cfg.resolution)
+    log(
+        f"STATUS training_plan steps_per_epoch={steps_per_epoch} "
+        f"updates_per_epoch={updates_per_epoch} total_updates={num_training_steps}"
+    )
 
     if cfg.grad_accum_steps < 1:
         raise ValueError("grad_accum_steps must be >= 1")
@@ -617,21 +539,19 @@ def train(cfg: TrainConfig):
     output_path = Path(cfg.output)
     output_dir = output_path.parent
     output_dir.mkdir(parents=True, exist_ok=True)
-
     base_name = output_path.stem
 
-    cached_latents_by_bucket: dict[int, dict[int, torch.Tensor]] | None = None
+    scaling_factor = float(getattr(vae.config, "scaling_factor", 0.18215))
 
+    cached_latents_by_bucket: dict[int, dict[int, torch.Tensor]] | None = None
     if cfg.cache_latents:
         log("STATUS building latent cache")
-
         cached_latents_by_bucket = {}
 
         with torch.no_grad():
             for bucket_res, bucket_indices in bucket_map.items():
                 log(f"STATUS caching bucket_res={bucket_res} samples={len(bucket_indices)}")
                 tfm_bucket = image_transform(bucket_res)
-
                 bucket_cache: dict[int, torch.Tensor] = {}
 
                 for idx in bucket_indices:
@@ -639,8 +559,7 @@ def train(cfg: TrainConfig):
                     img = Image.open(img_path).convert("RGB")
                     pixel = tfm_bucket(img).unsqueeze(0).to(device=device, dtype=dtype)
 
-                    latents = vae.encode(pixel).latent_dist.sample() * 0.18215
-
+                    latents = vae.encode(pixel).latent_dist.sample() * scaling_factor
                     bucket_cache[idx] = latents.detach().to(torch.float16).cpu()
 
                 cached_latents_by_bucket[bucket_res] = bucket_cache
@@ -649,14 +568,15 @@ def train(cfg: TrainConfig):
         log(f"STATUS cached_latents_total={total_cached}")
 
     if cfg.cpu_offload:
-        vae.to("cpu")
+        pipe.vae.to("cpu")
         log("STATUS cpu_offload=ENABLED components=vae")
 
         if not train_clip:
-            text_encoder.to("cpu")
-            log("STATUS cpu_offload=ENABLED components+=text_encoder")
+            pipe.text_encoder.to("cpu")
+            pipe.text_encoder_2.to("cpu")
+            log("STATUS cpu_offload=ENABLED components+=text_encoder,text_encoder_2")
         else:
-            log("STATUS cpu_offload=PARTIAL text_encoder=GPU (train_clip=True)")
+            log("STATUS cpu_offload=PARTIAL text_encoders=GPU (train_clip=True)")
     else:
         log("STATUS cpu_offload=DISABLED")
 
@@ -668,9 +588,7 @@ def train(cfg: TrainConfig):
             tfm_bucket = image_transform(bucket_res)
 
             if cfg.shuffle:
-                bucket_indices = torch.tensor(bucket_indices)[
-                    torch.randperm(len(bucket_indices))
-                ].tolist()
+                bucket_indices = torch.tensor(bucket_indices)[torch.randperm(len(bucket_indices))].tolist()
 
             num_samples = len(bucket_indices)
             bs = cfg.batch_size
@@ -686,55 +604,29 @@ def train(cfg: TrainConfig):
 
                     text = open(cap_path, "r", encoding="utf-8").read().strip()
 
-                    tokens = parse_caption_tags(text)
-                    if cfg.memorize_first_token and tokens:
-                        text = f"{tokens[0]}, {text}"
+                    if cfg.memorize_first_token:
+                        first = text.split(",")[0].strip()
+                        if first:
+                            text = f"{first}, {text}"
 
                     if cfg.prepend_token:
                         text = f"{cfg.prepend_token}, {text}"
                     if cfg.append_token:
                         text = f"{text}, {cfg.append_token}"
-                    
+
                     img = Image.open(img_path).convert("RGB")
                     images.append(tfm_bucket(img))
                     captions.append(text)
 
                 pixel = torch.stack(images).to(device=device, dtype=dtype)
 
-                tokens = tokenizer(
-                    captions,
-                    padding="max_length",
-                    truncation=True,
-                    max_length=77,
-                    return_tensors="pt",
-                ).input_ids.to(device)
-
-                if train_clip:
-                    if cfg.clip_skip > 0:
-                        out = text_encoder(tokens, output_hidden_states=True)
-                        idx = -(cfg.clip_skip + 1)
-                        enc = out.hidden_states[idx]
-                    else:
-                        enc = text_encoder(tokens)[0]
-                else:
-                    with torch.no_grad():
-                        if cfg.clip_skip > 0:
-                            out = text_encoder(tokens, output_hidden_states=True)
-                            layer_idx = -(cfg.clip_skip + 1)
-                            enc = out.hidden_states[layer_idx]
-                        else:
-                            enc = text_encoder(tokens)[0]
-
                 if cfg.cache_latents:
                     assert cached_latents_by_bucket is not None
                     bucket_cache = cached_latents_by_bucket[bucket_res]
-                    latents = torch.cat(
-                        [bucket_cache[i] for i in batch_indices],
-                        dim=0
-                    ).to(device=device, dtype=dtype)
+                    latents = torch.cat([bucket_cache[i] for i in batch_indices], dim=0).to(device=device, dtype=dtype)
                 else:
                     with torch.no_grad():
-                        latents = vae.encode(pixel).latent_dist.sample() * 0.18215
+                        latents = vae.encode(pixel).latent_dist.sample() * scaling_factor
 
                 noise = torch.randn_like(latents)
                 t = torch.randint(
@@ -746,13 +638,21 @@ def train(cfg: TrainConfig):
 
                 noisy = scheduler.add_noise(latents, noise, t)
 
-                pred = unet(noisy, t, enc).sample
-                loss = F.mse_loss(pred.float(), noise.float())
+                with torch.no_grad():
+                    prompt_embeds, pooled = encode_prompt_sdxl(pipe, captions, device, dtype)
+                    add_time_ids = make_add_time_ids(latents.size(0), bucket_res, device, dtype)
 
+                pred = unet(
+                    noisy,
+                    t,
+                    encoder_hidden_states=prompt_embeds,
+                    added_cond_kwargs={"text_embeds": pooled, "time_ids": add_time_ids},
+                ).sample
+
+                loss = F.mse_loss(pred.float(), noise.float())
                 (loss / cfg.grad_accum_steps).backward()
 
                 global_step += 1
-
                 do_step = (global_step % cfg.grad_accum_steps == 0)
 
                 if do_step:
@@ -769,61 +669,21 @@ def train(cfg: TrainConfig):
             out = output_dir / f"{base_name}_epoch_{epoch}.safetensors"
             log(f"STATUS saving checkpoint: {out.name}")
             metadata = build_lora_metadata(cfg, tag_counter, trained_words)
-            save_lora(
+            save_lora_sdxl(
                 unet=unet,
                 text_encoder=text_encoder if train_clip else None,
+                text_encoder_2=text_encoder_2 if train_clip else None,
                 path=str(out),
                 metadata=metadata,
             )
 
-            if cfg.do_inference:
-                preview_dir = output_dir / f"{base_name}_epoch_{epoch}_preview"
-                preview_dir.mkdir(parents=True, exist_ok=True)
-
-                prompt = cfg.inference_prompt
-
-                log("STATUS inference preview: BASE (LoRA OFF)")
-                set_lora_scale(unet, 0.0)
-                run_inference_preview_in_memory(
-                    unet=unet,
-                    vae=vae,
-                    text_encoder=text_encoder,
-                    tokenizer=tokenizer,
-                    scheduler=scheduler,
-                    output_dir=preview_dir / "base",
-                    prompt=prompt,
-                    steps=cfg.inference_steps,
-                    num_images=cfg.inference_images,
-                    seed=cfg.seed,
-                    device=device,
-                    dtype=dtype,
-                    clip_skip=cfg.clip_skip,
-                )
-
-                log("STATUS inference preview: LORA (LoRA ON)")
-                set_lora_scale(unet, 1.0)
-                run_inference_preview_in_memory(
-                    unet=unet,
-                    vae=vae,
-                    text_encoder=text_encoder,
-                    tokenizer=tokenizer,
-                    scheduler=scheduler,
-                    output_dir=preview_dir / "lora",
-                    prompt=prompt,
-                    steps=cfg.inference_steps,
-                    num_images=cfg.inference_images,
-                    seed=cfg.seed,
-                    device=device,
-                    dtype=dtype,
-                    clip_skip=cfg.clip_skip,
-                )
-
     final_out = output_dir / f"{base_name}_final.safetensors"
     log(f"STATUS saving final: {final_out.name}")
     metadata = build_lora_metadata(cfg, tag_counter, trained_words)
-    save_lora(
+    save_lora_sdxl(
         unet=unet,
         text_encoder=text_encoder if train_clip else None,
+        text_encoder_2=text_encoder_2 if train_clip else None,
         path=str(final_out),
         metadata=metadata,
     )
@@ -836,7 +696,7 @@ def main():
     ap.add_argument("--caption_ext", default=".txt")
     ap.add_argument("--prepend_token", default="")
     ap.add_argument("--append_token", default="")
-    ap.add_argument("--resolution", type=int, default=512)
+    ap.add_argument("--resolution", type=int, default=1024)
     ap.add_argument("--batch_size", type=int, default=1)
     ap.add_argument("--grad_accum_steps", type=int, default=1)
     ap.add_argument("--epochs", type=int, default=1)

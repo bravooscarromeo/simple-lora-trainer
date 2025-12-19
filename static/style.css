@@ -22,10 +22,26 @@
     }
 }
 
+#theme-menu {
+  position: fixed;
+  top: 10px;
+  right: 12px;
+  z-index: 9999;
+}
+
+#theme-select {
+  background: #1a1d24;
+  color: #fff;
+  border: 1px solid #333;
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+
 body {
     font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
     margin: 40px;
     background: var(--bg);
+    transition: background 0.3s ease;
     color: var(--text);
 }
 

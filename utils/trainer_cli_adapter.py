@@ -43,7 +43,6 @@ def build_train_lora_cli_args(config: dict, project_dir: Path) -> list[str]:
 
     output_path = project_dir / "output" / f"{project['name']}.safetensors"
 
-    # ---- Base args ----
     args = [
         "--model_type", model_type,
         "--base_model", base_model,
@@ -61,29 +60,24 @@ def build_train_lora_cli_args(config: dict, project_dir: Path) -> list[str]:
         "--save_every_epochs", str(training.get("save_every_epochs", 0)),
     ]
 
-    # ---- Scheduler ----
     scheduler = config.get("scheduler", {})
     if "type" in scheduler:
         args += ["--scheduler_type", str(scheduler.get("type", "constant"))]
     else:
-        # fallback if older configs don’t have scheduler block
         args += ["--scheduler_type", str(training.get("scheduler_type", "constant"))]
 
     args += ["--warmup_steps", str(scheduler.get("warmup_steps", 0))]
     args += ["--num_cycles", str(scheduler.get("num_cycles", 1))]
 
-    # ---- Optimizer ----
     opt = config.get("optimizer", {})
     opt_type = str(opt.get("type", "adamw")).lower()
     args += ["--optimizer", opt_type]
 
-    # ---- SGD-specific options ----
     if opt_type == "sgd":
         args += ["--momentum", str(opt.get("momentum", 0.9))]
         if opt.get("nesterov", False):
             args.append("--nesterov")
 
-    # Common optimizer knobs (trainer supports these flags already)
     args += ["--weight_decay", str(opt.get("weight_decay", 0.01))]
 
     betas = opt.get("betas", [0.9, 0.999])
@@ -94,10 +88,8 @@ def build_train_lora_cli_args(config: dict, project_dir: Path) -> list[str]:
 
     args += ["--epsilon", str(opt.get("epsilon", 1e-8))]
 
-    # ---- LoRA extra ----
     args += ["--lora_dropout", str(lora.get("dropout", 0.0))]
 
-    # ---- Bucket ----
     bucket = dataset.get("bucket", {})
     if bucket.get("enabled", False):
         args.append("--bucket")
@@ -107,14 +99,11 @@ def build_train_lora_cli_args(config: dict, project_dir: Path) -> list[str]:
             "--bucket_step", str(bucket.get("step", 64)),
         ]
 
-    # ---- Gradient checkpointing ----
     if precision.get("gradient_checkpointing", False):
         args.append("--gradient_checkpointing")
 
-    # ---- Repeats ----
     args += ["--repeats", str(dataset.get("repeats", 1))]
 
-    # ---- Caption tokens ----
     prepend = captions.get("prepend_token")
     append = captions.get("append_token")
     if prepend:
@@ -122,23 +111,18 @@ def build_train_lora_cli_args(config: dict, project_dir: Path) -> list[str]:
     if append:
         args += ["--append_token", append]
 
-    # ---- First token memorize ----
     if captions.get("first_word_memorize", False):
         args.append("--memorize_first_token")
 
-    # ---- Optional flags ----
     if dataset.get("shuffle", False):
         args.append("--shuffle")
 
-    # ---- Cache latents ----
     if dataset.get("cache_latents", False):
         args.append("--cache_latents")
 
-    # ---- Grad accumulation ----
     ga = training.get("gradient_accumulation", 1)
     args += ["--grad_accum_steps", str(int(ga))]
 
-    # ---- Inference flags ----
     if training.get("do_inference", False):
         args.append("--do_inference")
         args += [
@@ -147,9 +131,27 @@ def build_train_lora_cli_args(config: dict, project_dir: Path) -> list[str]:
             "--inference_images", str(training.get("inference_images", 2)),
         ]
 
-    # ---- CLIP skip ----
     conditioning = training.get("conditioning", {})
     clip_skip = conditioning.get("clip_skip", 0)
     args += ["--clip_skip", str(int(clip_skip))]
+
+    targets = lora.get("target_modules")
+
+    if isinstance(targets, str):
+        if targets.lower() == "auto":
+            pass
+        else:
+            parts = [t.strip() for t in targets.split(",") if t.strip()]
+            if parts:
+                args += ["--target_modules", ",".join(parts)]
+
+    elif isinstance(targets, list) and targets:
+        args += ["--target_modules", ",".join(targets)]
+
+    if precision.get("xformers"):
+        args.append("--use_xformers")
+
+    if precision.get("cpu_offload"):
+        args.append("--cpu_offload")
 
     return args

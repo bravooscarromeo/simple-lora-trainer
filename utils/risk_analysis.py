@@ -4,7 +4,6 @@ def analyze_training_risk(training):
     lrs = training.get("learning_rates", {})
     unet = lrs.get("unet")
     clip = lrs.get("clip")
-    t5 = lrs.get("t5")
 
     TYPICAL_MIN, TYPICAL_MAX = 1e-5, 5e-5
 
@@ -34,7 +33,6 @@ def analyze_training_risk(training):
 
     issues += check_lr("unet", unet)
     issues += check_lr("clip", clip)
-    issues += check_lr("t5", t5)
 
     if unet and clip and clip > unet:
         issues.append({

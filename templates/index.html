@@ -15,7 +15,16 @@
     </select>
 </form>
 
-<form method="post" action="{{ url_for('create_project_route') }}" style="margin-top: 16px;">
+<div id="theme-menu">
+  <select id="theme-select">
+    <option value="dark">Dark</option>
+    <option value="gray">Gray</option>
+    <option value="slate">Slate</option>
+    <option value="midnight">Midnight</option>
+  </select>
+</div>
+
+<form method="post" action="{{ url_for('projects.create_project_route') }}" style="margin-top: 16px;">
   <label>
     New Project
     <span class="tooltip"
@@ -38,7 +47,7 @@
 <div class="section danger-zone">
   <div class="danger-title">Danger Zone</div>
 
-  <form method="post" action="{{ url_for('delete_project_route') }}">
+  <form method="post" action="{{ url_for('projects.delete_project_route') }}">
     <input type="hidden" name="project_name" value="{{ selected }}">
 
     <label>
@@ -141,12 +150,13 @@
 <input name="resolution" type="number" value="{{ dataset.get('resolution','') }}">
 <br><br>
 
-<label>Repeats (from folder name)</label><br>
+<label>Repeats</label><br>
 <input
-    id="repeats"
-    type="number"
-    readonly
-    style="background:#2a2a2a; opacity:0.8;"
+  type="number"
+  id="repeats"
+  name="repeats"
+  min="1"
+  value="{{ config.dataset.repeats }}"
 >
 <br><br>
 
@@ -282,6 +292,13 @@ Smaller values increase flexibility but cost more VRAM.
 <br><br>
 
 <label>
+  Run inference previews
+</label><br>
+<input type="checkbox" name="do_inference"
+       {% if training.get("do_inference") %}checked{% endif %}>
+<br><br>
+
+<label>
   Gradient Accumulation
   <span class="tooltip" data-tip="
 Simulates a larger batch size by accumulating gradients across steps.
@@ -309,7 +326,15 @@ Reduces VRAM usage but slows training.
 <label>
   UNet LR
   <span class="tooltip"
-        data-tip="Learning rate for UNet weights. Typical range is 1e-5 to 5e-5. Too high can destroy training.">
+        data-tip="Learning rate for UNet weights. Typical range is 1e-5 to 5e-5. Too high can destroy training.
+        
+        If training loss becomes NaN, the run is invalid and will not recover.
+Common causes:
+- Learning rate too high
+- Mixed precision instability (fp16 / bf16)
+
+Fix by lowering LR or changing precision.
+">
     ⓘ
   </span>
 </label><br>
@@ -329,23 +354,6 @@ Reduces VRAM usage but slows training.
        value="{{ lrs.get('clip','') }}"
        class="{% if 'lr_clip' in danger_fields %}danger{% endif %}">
 <br><br>
-
-<label>
-  T5 LR
-  <span class="tooltip" data-tip="
-Used only by SDXL.
-SD 1.5 does not include a T5 text encoder.
-This setting is ignored for SD 1.5.
-">ⓘ</span>
-</label><br>
-
-<input
-  id="lr_t5"
-  name="lr_t5"
-  type="text"
-  value="{{ lrs.get('t5','') }}"
-  class="{% if 'lr_t5' in danger_fields %}danger{% endif %}"
->
 
 <hr>
 </div>
@@ -390,21 +398,6 @@ Advanced option — usually unnecessary.
 </label><br>
 <input name="lora_target_modules" type="text" value="{{ lora.get('target_modules','') }}">
 <br><br>
-
-<label>
-  Bias
-  <span class="tooltip" data-tip="
-Controls whether bias weights are trained.
-none: LoRA only (recommended)
-lora_only: LoRA bias terms
-all: All bias weights (rare)
-">ⓘ</span>
-</label><br>
-<select name="lora_bias">
-{% for opt in ["none","all","lora_only"] %}
-  <option value="{{ opt }}" {% if lora.get('bias') == opt %}selected{% endif %}>{{ opt }}</option>
-{% endfor %}
-</select>
 
 <hr>
 </div>
@@ -569,13 +562,13 @@ Most setups use 1.
   </p>
 
   <button
-    type="submit"
-    name="action"
-    value="train"
-    class="train-button"
-    {% if has_fatal %}disabled{% endif %}
-  >
-    ▶ Start Training
+      type="submit"
+      name="action"
+      value="train"
+      class="train-button"
+      formaction="{{ url_for('training.start_training', project=selected) }}"
+      {% if has_fatal %}disabled{% endif %}>
+      Start Training
   </button>
 
 </div>
@@ -593,13 +586,14 @@ Most setups use 1.
   <pre id="log-box" style="max-height: 300px; overflow-y: auto;"></pre>
 
   <button
-    type="submit"
-    class="danger"
-    formaction="{{ url_for('stop_training', project=selected) }}"
-    formmethod="post"
-  >
-    ⏹ Stop Training
+      type="submit"
+      name="action"
+      value="stop"
+      class="stop-button"
+      formaction="{{ url_for('training.stop_training', project=selected) }}">
+      Stop Training
   </button>
+
 </div>
 
 <!-- ===================== LIVE STATUS ===================== -->
@@ -666,65 +660,25 @@ setInterval(fetchLogs, 2000);
 </script>
 
 <script>
-function updateT5Availability() {
-  const archSelect = document.querySelector('select[name="model_architecture"]');
-  const t5Input = document.getElementById('lr_t5');
+const themes = {
+  dark: "#0f1115",
+  gray: "#1e1e1e",
+  slate: "#1b2028",
+  midnight: "#0a0c10",
+};
 
-  if (!archSelect || !t5Input) return;
+const select = document.getElementById("theme-select");
 
-  if (archSelect.value === "sd15") {
-    t5Input.disabled = true;
-    t5Input.style.opacity = "0.5";
-    t5Input.style.cursor = "not-allowed";
-  } else {
-    t5Input.disabled = false;
-    t5Input.style.opacity = "1";
-    t5Input.style.cursor = "text";
-  }
+function applyTheme(name) {
+  document.documentElement.style.setProperty("--bg", themes[name]);
+  localStorage.setItem("ui_theme", name);
 }
 
-// Run on page load
-document.addEventListener("DOMContentLoaded", updateT5Availability);
+const saved = localStorage.getItem("ui_theme") || "dark";
+select.value = saved;
+applyTheme(saved);
 
-// Run when architecture changes
-document.querySelector('select[name="model_architecture"]')
-  ?.addEventListener("change", updateT5Availability);
-</script>
-
-<script>
-document.addEventListener("DOMContentLoaded", () => {
-    const projectSelect = document.querySelector('select[name="project"]');
-    const repeatsInput = document.getElementById("repeats");
-
-    if (!projectSelect || !repeatsInput) return;
-
-    function updateRepeats() {
-        const projectName = projectSelect.value.trim();
-
-        if (!projectName) {
-            repeatsInput.value = "";
-            return;
-        }
-
-        fetch("/dataset-repeat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ project_name: projectName })
-        })
-        .then(res => res.json())
-        .then(data => {
-            repeatsInput.value = data.repeat ?? "";
-        })
-        .catch(() => {
-            repeatsInput.value = "";
-        });
-    }
-
-    projectSelect.addEventListener("change", updateRepeats);
-
-    // Run once on page load
-    updateRepeats();
-});
+select.addEventListener("change", e => applyTheme(e.target.value));
 </script>
 
 {% endif %}

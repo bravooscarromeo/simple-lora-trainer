@@ -1,3 +1,19 @@
+# torch
+# torchvision
+
+# Recommended but Optional 
+# xformers
+
 flask
 pyyaml
+diffusers>=0.25
+transformers>=4.36
+accelerate
+safetensors
+huggingface_hub
+pillow
+numpy
+tqdm
+requests
+
 
