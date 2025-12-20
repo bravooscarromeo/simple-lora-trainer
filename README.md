@@ -17,12 +17,12 @@ System Requirements:
 ----------------------------
 Installation:
 ###
-1) git clone https://github.com/bravooscarromeo/simple-lora-trainer.git
-2) cd path/to/Lora_Trainer
+1) git clone https://github.com/BurninWeeknd/simple-lora-trainer.git
+2) cd path/to/simple-lora-trainer
 3) pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cuNNN (Specify version in for NNN) (Must be compatible with Toolkit version)
 4) pip install -r requirements.txt
 5) python app.py
-6) hosted on port 5000 - ctrl + click the link in terminal
+6) hosted on 127.0.0.1:7680 (LocalHost)
 ----------------------------
 Optional (Recommended) - 
 ###
