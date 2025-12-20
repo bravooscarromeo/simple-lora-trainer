@@ -2,15 +2,14 @@
 - A simple web UI for training LoRA models.
 - Designed to avoid overwhelming settings and focus on the ones that actually matter.
 - Supports SD 1.5 and SDXL only
-- For Linux (created & tested on Ubuntu 24.04 LTS)
 - Minimal UI, safety checks included
 - No advanced / experimental features by default
+- Supports Windows 11 and Linux (Tested on Ubuntu 24.04 & Windows 11) 
 ----------------------------
 System Requirements:
 ###
-1) Linux (Ubuntu recommended)
-2) NVIDIA GPU (required for training)
-3) CUDA compatible with your PyTorch install
+1) NVIDIA GPU (required for training)
+2) CUDA compatible with your PyTorch install
 ----------------------------
 - Python 3.10+ recommended
 ----------------------------
