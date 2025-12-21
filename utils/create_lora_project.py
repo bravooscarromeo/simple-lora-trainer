@@ -75,17 +75,11 @@ def build_default_config(project_name: str):
             "num_cycles": 1
         },
 
-        "vae": {
-            "path": None,
-            "bake_into_latents": True,
-            "use_for_sampling": True
-        },
-
         "precision": {
             "mixed_precision": "fp16",
             "gradient_checkpointing": False,
             "xformers": False,
-            "cpu_offload": False
+            "cpu_offload": False,
         },
 
         "logging": {
@@ -97,7 +91,7 @@ def build_default_config(project_name: str):
         "output": {
             "save_state": False,
             "save_format": "safetensors"
-        }
+        },
     }
 
 def create_project(name: str) -> Path:

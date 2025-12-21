@@ -6,28 +6,10 @@
 </head>
 
 <body>
+  <div class="container">
+      {% block content %}{% endblock %}
+  </div>
 
-<div class="container">
-    {% block content %}{% endblock %}
-</div>
-
-<script>
-  // Save scroll position before reloads
-  window.addEventListener("beforeunload", () => {
-    localStorage.setItem("scrollY", window.scrollY);
-  });
-
-  // Restore scroll position unless there are validation errors
-  window.addEventListener("load", () => {
-    // If a danger field exists, let index.html handle scrolling
-    if (document.querySelector(".danger")) return;
-
-    const scrollY = localStorage.getItem("scrollY");
-    if (scrollY !== null) {
-      window.scrollTo(0, parseInt(scrollY, 10));
-    }
-  });
-</script>
-
+  <script src="{{ url_for('static', filename='ui.js') }}"></script>
 </body>
 </html>

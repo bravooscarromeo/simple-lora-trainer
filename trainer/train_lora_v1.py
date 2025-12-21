@@ -95,7 +95,7 @@ def log_train_config(cfg: TrainConfig) -> None:
     log(f"model_type={cfg.model_type}")
     log(f"base_model={cfg.base_model}")
     log(f"precision={cfg.precision}")
-    log("device=cuda")
+    log(f"device={torch.device('cuda' if torch.cuda.is_available() else 'cpu')}")
     log(f"resolution={cfg.resolution}")
     log(f"batch_size={cfg.batch_size}")
     log(f"grad_accum_steps={cfg.grad_accum_steps}")
@@ -391,22 +391,42 @@ def run_inference_preview_in_memory(
         imgs[0].save(output_dir / f"img_{i}.png")
 
 def load_sd_models(cfg: TrainConfig, device, dtype):
-    tokenizer = CLIPTokenizer.from_pretrained(cfg.base_model, subfolder="tokenizer")
+    tokenizer = CLIPTokenizer.from_pretrained(
+        cfg.base_model,
+        subfolder="tokenizer",
+    )
+
     text_encoder = CLIPTextModel.from_pretrained(
-        cfg.base_model, subfolder="text_encoder", torch_dtype=dtype
+        cfg.base_model,
+        subfolder="text_encoder",
+        torch_dtype=dtype,
     ).to(device)
+
     vae = AutoencoderKL.from_pretrained(
-        cfg.base_model, subfolder="vae", torch_dtype=dtype
+        cfg.base_model,
+        subfolder="vae",
+        torch_dtype=dtype,
     ).to(device)
+
     unet = UNet2DConditionModel.from_pretrained(
-        cfg.base_model, subfolder="unet", torch_dtype=dtype
-    ).to(device)
-    scheduler = DDPMScheduler.from_pretrained(cfg.base_model, subfolder="scheduler")
+        cfg.base_model,
+        subfolder="unet",
+        torch_dtype=dtype,
+    )
+
+    unet.to(device)
+
+    scheduler = DDPMScheduler.from_pretrained(
+        cfg.base_model,
+        subfolder="scheduler",
+    )
+
     if cfg.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
         log("STATUS gradient_checkpointing=ENABLED")
     else:
         log("STATUS gradient_checkpointing=DISABLED")
+
     return tokenizer, text_encoder, vae, unet, scheduler
 
 def pick_bucket_resolution(w: int, h: int, cfg: TrainConfig) -> int:
@@ -425,8 +445,8 @@ def train(cfg: TrainConfig):
 
     if cfg.cpu_offload and not cfg.cache_latents:
         raise RuntimeError(
-            "cpu_offload requires cache_latents=True "
-            "(VAE runs on CPU only when latents are cached)"
+            "cpu_offload=True currently requires cache_latents=True "
+            "(this trainer offloads VAE, so VAE must not be used in-step)."
         )
 
     log("STATUS loading_dataset")
@@ -525,6 +545,8 @@ def train(cfg: TrainConfig):
         unet_targets,
     )
 
+    assert next(unet.parameters()).is_cuda, "UNet must be fully on GPU during LoRA training"
+
     log(f"STATUS lora_targets={','.join(unet_targets)} matched={unet_injected}")
     log(f"STATUS lora_layers={unet_injected}")
 
@@ -555,6 +577,10 @@ def train(cfg: TrainConfig):
         param_groups.append(
             {"params": te_lora_params, "lr": cfg.clip_lr}
         )
+
+    trainable_params = list(unet_lora_params)
+    if train_clip:
+        trainable_params += te_lora_params
 
     if cfg.optimizer == "adamw":
         optimizer = torch.optim.AdamW(
@@ -604,8 +630,6 @@ def train(cfg: TrainConfig):
         f"updates_per_epoch={updates_per_epoch} "
         f"total_updates={num_training_steps}"
     )
-
-    tfm = image_transform(cfg.resolution)
 
     if cfg.grad_accum_steps < 1:
         raise ValueError("grad_accum_steps must be >= 1")
@@ -660,6 +684,10 @@ def train(cfg: TrainConfig):
     else:
         log("STATUS cpu_offload=DISABLED")
 
+    if cfg.do_inference and cfg.cpu_offload:
+        log("WARN do_inference disabled because cpu_offload=True (preview expects GPU models)")
+        cfg.do_inference = False
+
     for epoch in range(1, cfg.epochs + 1):
 
         for bucket_res, bucket_indices in bucket_map.items():
@@ -701,13 +729,15 @@ def train(cfg: TrainConfig):
 
                 pixel = torch.stack(images).to(device=device, dtype=dtype)
 
+                te_device = next(text_encoder.parameters()).device
+
                 tokens = tokenizer(
                     captions,
                     padding="max_length",
                     truncation=True,
                     max_length=77,
                     return_tensors="pt",
-                ).input_ids.to(device)
+                ).input_ids.to(te_device)
 
                 if train_clip:
                     if cfg.clip_skip > 0:
@@ -746,7 +776,10 @@ def train(cfg: TrainConfig):
 
                 noisy = scheduler.add_noise(latents, noise, t)
 
-                pred = unet(noisy, t, enc).sample
+                unet_device = next(unet.parameters()).device
+                enc_unet = enc.to(unet_device)
+
+                pred = unet(noisy, t, encoder_hidden_states=enc_unet).sample
                 loss = F.mse_loss(pred.float(), noise.float())
 
                 (loss / cfg.grad_accum_steps).backward()
@@ -756,6 +789,7 @@ def train(cfg: TrainConfig):
                 do_step = (global_step % cfg.grad_accum_steps == 0)
 
                 if do_step:
+                    torch.nn.utils.clip_grad_norm_(trainable_params, 1.0)
                     optimizer.step()
                     lr_scheduler.step()
                     optimizer.zero_grad(set_to_none=True)

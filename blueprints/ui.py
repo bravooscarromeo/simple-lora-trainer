@@ -6,7 +6,6 @@ from utils.risk_analysis import analyze_training_risk
 import utils.dataset as dataset
 import utils.training as training
 import utils.lora as lora
-import utils.vae as vae
 import utils.precision as precision
 import utils.optimizer as optimizer
 import utils.model as model
@@ -59,7 +58,6 @@ def index():
             model.apply(request.form, config, issues)
             training.apply(request.form, config, issues)
             lora.apply(request.form, config, issues)
-            vae.apply(request.form, config, issues)
             precision.apply(request.form, config, issues)
             optimizer.apply(request.form, config, issues)
 

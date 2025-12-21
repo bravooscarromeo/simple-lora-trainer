@@ -1,9 +1,9 @@
 import os
+import json
 from pathlib import Path
 import argparse
 from dataclasses import dataclass
 from typing import List, Tuple
-import json
 from collections import Counter
 
 import torch
@@ -13,9 +13,15 @@ import torch.nn.functional as F
 from PIL import Image
 from torchvision import transforms
 
-from diffusers import StableDiffusionXLPipeline, DDPMScheduler
-from safetensors.torch import save_file
+from diffusers import (UNet2DConditionModel, AutoencoderKL, DDPMScheduler)
+
 from diffusers.optimization import get_scheduler
+
+
+from transformers import (CLIPTextModel, CLIPTokenizer)
+
+from safetensors.torch import save_file
+
 
 @dataclass
 class TrainConfig:
@@ -99,7 +105,7 @@ def log_train_config(cfg: TrainConfig) -> None:
     log(f"model_type={cfg.model_type}")
     log(f"base_model={cfg.base_model}")
     log(f"precision={cfg.precision}")
-    log("device=cuda")
+    log(f"device={torch.device('cuda' if torch.cuda.is_available() else 'cpu')}")
     log(f"resolution={cfg.resolution}")
     log(f"batch_size={cfg.batch_size}")
     log(f"grad_accum_steps={cfg.grad_accum_steps}")
@@ -232,7 +238,6 @@ def lora_parameters(unet: nn.Module):
             yield m.A
             yield m.B
 
-
 def save_lora_sdxl(
     *,
     unet: nn.Module,
@@ -295,126 +300,154 @@ def save_lora_sdxl(
 
 @torch.no_grad()
 def encode_prompt_sdxl(
-    pipe: StableDiffusionXLPipeline,
-    prompts: list[str],
-    device: torch.device,
-    dtype: torch.dtype,
+    captions,
+    tokenizer,
+    tokenizer_2,
+    text_encoder,
+    text_encoder_2,
+    dtype,
 ):
-    out = pipe.encode_prompt(
-        prompt=prompts,
-        prompt_2=prompts,
-        device=device,
-        num_images_per_prompt=1,
-        do_classifier_free_guidance=False,
-    )
+    te1_device = next(text_encoder.parameters()).device
+    te2_device = next(text_encoder_2.parameters()).device
 
-    if isinstance(out, tuple):
-        if len(out) == 2:
-            prompt_embeds, pooled = out
-        elif len(out) == 3:
-            prompt_embeds, pooled, _ = out
-        elif len(out) >= 4:
-            prompt_embeds = out[0]
-            pooled = out[2]
-        else:
-            raise RuntimeError(f"Unexpected encode_prompt return length: {len(out)}")
-    else:
-        raise RuntimeError("encode_prompt did not return a tuple")
+    inputs_1 = tokenizer(
+        captions,
+        padding="max_length",
+        truncation=True,
+        max_length=tokenizer.model_max_length,
+        return_tensors="pt",
+    ).to(te1_device)
+
+    inputs_2 = tokenizer_2(
+        captions,
+        padding="max_length",
+        truncation=True,
+        max_length=tokenizer_2.model_max_length,
+        return_tensors="pt",
+    ).to(te2_device)
+
+    assert inputs_1.input_ids.device == te1_device
+    assert inputs_2.input_ids.device == te2_device
+
+    emb_1 = text_encoder(**inputs_1).last_hidden_state
+    out_2 = text_encoder_2(**inputs_2)
+    emb_2 = out_2.last_hidden_state
+    pooled = out_2.pooler_output
+
+    prompt_embeds = torch.cat([emb_1, emb_2], dim=-1)
 
     return prompt_embeds.to(dtype), pooled.to(dtype)
+
+def decode_latents_to_pil(vae, latents):
+    latents = latents / vae.config.scaling_factor
+    images = vae.decode(latents).sample
+    images = (images / 2 + 0.5).clamp(0, 1)
+
+    images = images.cpu().permute(0, 2, 3, 1).numpy()
+    images = (images * 255).round().astype("uint8")
+
+    return [Image.fromarray(img) for img in images]
 
 @torch.no_grad()
 def run_sdxl_inference_preview(
     *,
-    pipe: StableDiffusionXLPipeline,
-    unet: nn.Module,
-    vae: nn.Module,
-    scheduler: DDPMScheduler,
+    unet,
+    vae,
+    scheduler,
+    prompt_embeds,
+    pooled_prompt_embeds,
     output_dir: Path,
-    prompt: str,
     steps: int,
     seed: int,
-    device: torch.device,
-    dtype: torch.dtype,
+    dtype,
     resolution: int,
 ):
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    unet.eval()
-    vae.eval()
+    unet_device = next(unet.parameters()).device
+    vae_device = next(vae.parameters()).device
 
-    scheduler.set_timesteps(steps, device=device)
-
-    prompt_embeds, pooled = encode_prompt_sdxl(
-        pipe,
-        [prompt],
-        device,
-        dtype,
-    )
-
-    add_time_ids = make_add_time_ids(
-        batch_size=1,
-        bucket_res=resolution,
-        device=device,
-        dtype=dtype,
-    )
-
-    latent_h = resolution // 8
-    latent_w = resolution // 8
-
-    gen = torch.Generator(device=device).manual_seed(seed)
+    torch.manual_seed(seed)
 
     latents = torch.randn(
-        (1, 4, latent_h, latent_w),
-        generator=gen,
-        device=device,
+        (1, unet.config.in_channels, resolution // 8, resolution // 8),
+        device=unet_device,
         dtype=dtype,
     )
 
-    for t in scheduler.timesteps:
-        latent_in = latents
-        if hasattr(scheduler, "scale_model_input"):
-            latent_in = scheduler.scale_model_input(latent_in, t)
+    scheduler.set_timesteps(steps, device=unet_device)
 
+    time_ids = make_add_time_ids(
+        batch_size=1,
+        bucket_res=resolution,
+        dtype=dtype,
+    ).to(unet_device)
+    
+    for t in scheduler.timesteps:
         noise_pred = unet(
-            latent_in,
+            latents,
             t,
-            encoder_hidden_states=prompt_embeds,
+            encoder_hidden_states=prompt_embeds.to(unet_device),
             added_cond_kwargs={
-                "text_embeds": pooled,
-                "time_ids": add_time_ids,
+                "text_embeds": pooled_prompt_embeds.to(unet_device),
+                "time_ids": time_ids,
             },
         ).sample
 
         latents = scheduler.step(noise_pred, t, latents).prev_sample
 
-    scaling_factor = float(getattr(vae.config, "scaling_factor", 0.18215))
-    latents = latents / scaling_factor
+    latents = latents / vae.config.scaling_factor
+    imgs = decode_latents_to_pil(vae, latents.to(vae_device))
+    imgs[0].save(output_dir / "preview.png")
 
-    image = vae.decode(latents).sample
-    image = (image / 2 + 0.5).clamp(0, 1)
-    image = image[0].permute(1, 2, 0).cpu().numpy()
-
-    img = Image.fromarray((image * 255).astype("uint8"))
-    img.save(output_dir / "preview.png")
-
-def make_add_time_ids(batch_size: int, bucket_res: int, device: torch.device, dtype: torch.dtype):
+def make_add_time_ids(batch_size: int, bucket_res: int, dtype: torch.dtype):
     h = w = int(bucket_res)
-    t = torch.tensor([h, w, 0, 0, h, w], device=device, dtype=dtype)
+    t = torch.tensor([h, w, 0, 0, h, w], dtype=dtype)
     return t.unsqueeze(0).repeat(batch_size, 1)
 
-def load_sdxl_pipeline(cfg: TrainConfig, device: torch.device, dtype: torch.dtype) -> StableDiffusionXLPipeline:
-    pipe = StableDiffusionXLPipeline.from_pretrained(cfg.base_model, torch_dtype=dtype)
-    pipe.to(device)
-    pipe.set_progress_bar_config(disable=True)
+def load_sdxl_components(base_model: str, device, dtype):
 
-    if cfg.gradient_checkpointing:
-        pipe.unet.enable_gradient_checkpointing()
-        log("STATUS gradient_checkpointing=ENABLED")
-    else:
-        log("STATUS gradient_checkpointing=DISABLED")
+    log(f"STATUS loading UNet (device={device})")
+    unet = UNet2DConditionModel.from_pretrained(
+        base_model,
+        subfolder="unet",
+        torch_dtype=dtype,
+    ).to(device)
 
-    return pipe
+    log(f"STATUS loading VAE (device={device})")
+    vae = AutoencoderKL.from_pretrained(
+        base_model,
+        subfolder="vae",
+        torch_dtype=dtype,
+    ).to(device)
+
+    log(f"STATUS loading text_encoder_1 (device={device})")
+    text_encoder = CLIPTextModel.from_pretrained(
+        base_model,
+        subfolder="text_encoder",
+        torch_dtype=dtype,
+    ).to(device)
+
+    log(f"STATUS loading text_encoder_2 (device={device})")
+    text_encoder_2 = CLIPTextModel.from_pretrained(
+        base_model,
+        subfolder="text_encoder_2",
+        torch_dtype=dtype,
+    ).to(device)
+
+    log("STATUS loading tokenizer_1")
+    tokenizer = CLIPTokenizer.from_pretrained(
+        base_model, subfolder="tokenizer"
+    )
+
+    log("STATUS loading tokenizer_2")
+    tokenizer_2 = CLIPTokenizer.from_pretrained(
+        base_model, subfolder="tokenizer_2"
+    )
+
+    log("STATUS all SDXL components loaded")
+
+    return unet, vae, text_encoder, text_encoder_2, tokenizer, tokenizer_2
 
 def train(cfg: TrainConfig):
     torch.manual_seed(cfg.seed)
@@ -487,26 +520,30 @@ def train(cfg: TrainConfig):
     if cfg.model_type != "sdxl":
         raise RuntimeError("train_lora_sdxl_v1.py supports only --model_type sdxl")
 
-    log("STATUS loading_models")
-    pipe = load_sdxl_pipeline(cfg, device, dtype)
+    unet, vae, text_encoder, text_encoder_2, tokenizer, tokenizer_2 = \
+        load_sdxl_components(cfg.base_model, device, dtype)
+
+    if cfg.gradient_checkpointing:
+        unet.enable_gradient_checkpointing()
+        log("STATUS gradient_checkpointing=ENABLED")
+    else:
+        log("STATUS gradient_checkpointing=DISABLED")
 
     if cfg.use_xformers:
         try:
-            pipe.enable_xformers_memory_efficient_attention()
-            log("STATUS xformers=ENABLED")
-        except Exception as e:
-            raise RuntimeError(
-                "xFormers requested but could not be enabled. "
-                "Is xformers installed?"
-            ) from e
+            unet.enable_xformers_memory_efficient_attention()
+            log("STATUS xformers=ENABLED (unet only)")
+        except Exception:
+            log("STATUS xformers=FAILED (continuing)")
     else:
         log("STATUS xformers=DISABLED")
 
-    unet = pipe.unet
-    vae = pipe.vae
 
-    text_encoder = pipe.text_encoder
-    text_encoder_2 = pipe.text_encoder_2
+    unet = unet
+    vae = vae
+
+    text_encoder = text_encoder
+    text_encoder_2 = text_encoder_2
     train_clip = cfg.clip_lr is not None and float(cfg.clip_lr) > 0.0
     log(f"STATUS clip_train={train_clip} clip_lr={cfg.clip_lr}")
 
@@ -516,12 +553,12 @@ def train(cfg: TrainConfig):
     for p in vae.parameters():
         p.requires_grad_(False)
 
-    pipe.text_encoder.eval()
-    for p in pipe.text_encoder.parameters():
+    text_encoder.eval()
+    for p in text_encoder.parameters():
         p.requires_grad_(False)
 
-    pipe.text_encoder_2.eval()
-    for p in pipe.text_encoder_2.parameters():
+    text_encoder_2.eval()
+    for p in text_encoder_2.parameters():
         p.requires_grad_(False)
 
     unet.eval()
@@ -531,6 +568,9 @@ def train(cfg: TrainConfig):
     unet_targets = cfg.target_modules or DEFAULT_TARGET_MODULES
     unet_injected = inject_lora(unet, cfg.lora_rank, cfg.lora_alpha, cfg.lora_dropout, unet_targets)
     unet_lora_params = list(lora_parameters(unet))
+
+    assert next(unet.parameters()).is_cuda, \
+        "UNet must be fully on GPU during SDXL LoRA training"
 
     log(f"STATUS lora_targets={','.join(unet_targets)} matched={unet_injected}")
     log(f"STATUS lora_layers={unet_injected}")
@@ -559,6 +599,10 @@ def train(cfg: TrainConfig):
     if train_clip:
         param_groups.append({"params": te1_lora_params, "lr": cfg.clip_lr})
         param_groups.append({"params": te2_lora_params, "lr": cfg.clip_lr})
+
+    trainable_params = list(unet_lora_params)
+    if train_clip:
+        trainable_params += te1_lora_params + te2_lora_params
 
     if cfg.optimizer == "adamw":
         optimizer = torch.optim.AdamW(
@@ -643,17 +687,25 @@ def train(cfg: TrainConfig):
         log(f"STATUS cached_latents_total={total_cached}")
 
     if cfg.cpu_offload:
-        pipe.vae.to("cpu")
+        vae.to("cpu")
         log("STATUS cpu_offload=ENABLED components=vae")
 
         if not train_clip:
-            pipe.text_encoder.to("cpu")
-            pipe.text_encoder_2.to("cpu")
+            text_encoder.to("cpu")
+            text_encoder_2.to("cpu")
             log("STATUS cpu_offload=ENABLED components+=text_encoder,text_encoder_2")
         else:
             log("STATUS cpu_offload=PARTIAL text_encoders=GPU (train_clip=True)")
     else:
         log("STATUS cpu_offload=DISABLED")
+
+    if cfg.cpu_offload:
+        assert next(unet.parameters()).is_cuda, \
+            "cpu_offload must NOT move UNet off GPU during training"
+
+    if cfg.do_inference and cfg.cpu_offload:
+        log("WARN do_inference disabled because cpu_offload=True (preview expects GPU models)")
+        cfg.do_inference = False
 
     for epoch in range(1, cfg.epochs + 1):
 
@@ -714,15 +766,40 @@ def train(cfg: TrainConfig):
                 noisy = scheduler.add_noise(latents, noise, t)
 
                 with torch.no_grad():
-                    prompt_embeds, pooled = encode_prompt_sdxl(pipe, captions, device, dtype)
-                    add_time_ids = make_add_time_ids(latents.size(0), bucket_res, device, dtype)
+                    prompt_embeds, pooled = encode_prompt_sdxl(
+                        captions,
+                        tokenizer,
+                        tokenizer_2,
+                        text_encoder,
+                        text_encoder_2,
+                        dtype,
+                    )
+                    add_time_ids = make_add_time_ids(
+                        latents.size(0),
+                        bucket_res,
+                        dtype,
+                    )
+
+                unet_device = next(unet.parameters()).device
+
+                noisy_unet = noisy.to(unet_device)
+                t_unet = t.to(unet_device)
+                pe_unet = prompt_embeds.to(unet_device)
+                pooled_unet = pooled.to(unet_device)
+                time_ids_unet = add_time_ids.to(unet_device)
 
                 pred = unet(
-                    noisy,
-                    t,
-                    encoder_hidden_states=prompt_embeds,
-                    added_cond_kwargs={"text_embeds": pooled, "time_ids": add_time_ids},
+                    noisy_unet,
+                    t_unet,
+                    encoder_hidden_states=pe_unet,
+                    added_cond_kwargs={
+                        "text_embeds": pooled_unet,
+                        "time_ids": time_ids_unet,
+                    },
                 ).sample
+
+                pred = pred.to(device)
+
 
                 loss = F.mse_loss(pred.float(), noise.float())
                 (loss / cfg.grad_accum_steps).backward()
@@ -731,6 +808,7 @@ def train(cfg: TrainConfig):
                 do_step = (global_step % cfg.grad_accum_steps == 0)
 
                 if do_step:
+                    torch.nn.utils.clip_grad_norm_(trainable_params, 1.0)
                     optimizer.step()
                     lr_scheduler.step()
                     optimizer.zero_grad(set_to_none=True)
@@ -756,19 +834,28 @@ def train(cfg: TrainConfig):
             preview_dir = output_dir / f"{base_name}_epoch_{epoch}_preview"
             log("STATUS inference preview (SDXL)")
 
+            prompt_embeds, pooled = encode_prompt_sdxl(
+                [cfg.inference_prompt],
+                tokenizer,
+                tokenizer_2,
+                text_encoder,
+                text_encoder_2,
+                dtype,
+            )
+
             run_sdxl_inference_preview(
-                pipe=pipe,
                 unet=unet,
                 vae=vae,
                 scheduler=scheduler,
+                prompt_embeds=prompt_embeds,
+                pooled_prompt_embeds=pooled,
                 output_dir=preview_dir,
-                prompt=cfg.inference_prompt,
                 steps=cfg.inference_steps,
                 seed=cfg.seed,
-                device=device,
                 dtype=dtype,
                 resolution=cfg.resolution,
             )
+
 
     final_out = output_dir / f"{base_name}_final.safetensors"
     log(f"STATUS saving final: {final_out.name}")
