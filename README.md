@@ -13,7 +13,7 @@ System Requirements:
 ----------------------------
 - Python 3.10+ recommended
 ----------------------------
-- Conda environment strongly suggested
+- Conda environment strongly recommended 
 ----------------------------
 Installation:
 ###
@@ -31,7 +31,7 @@ Optional (Recommended) -
 Usage - 
 ###
 1) Create a project within the app
-2) Add photos to path/to/simple-lora-trainer/projects/<projectname>/dataset/ path defaults here in UI but if you prefer a subfolder within just add it to default path
+2) Add photos to path/to/simple-lora-trainer/projects/*projectname*/dataset/ path defaults here in UI but if you prefer a subfolder within just add it to default path within UI
 3) Generate captions within dataset prep (Top left corner) 
 4) Configure settings
 5) Click Train
