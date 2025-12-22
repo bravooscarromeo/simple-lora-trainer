@@ -199,6 +199,16 @@ button:hover {
   margin-bottom: 14px;
 }
 
+button.danger {
+  background: var(--danger-bg);
+  color: var(--text);
+  opacity: 1;
+}
+
+button.danger:hover {
+  filter: brightness(1.05);
+}
+
 .tooltip {
   position: relative;
   display: inline-block;
@@ -311,3 +321,115 @@ pre {
   border-radius: 8px;
 }
 
+.image-column input[type="text"],
+.image-column input[type="number"] {
+  width: 100%;
+  max-width: 200px;
+}
+
+.crop-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.crop-field {
+  display: flex;
+  flex-direction: column;
+}
+
+#crop-size-input {
+  width: 100px;
+}
+
+.crop-action {
+  position: relative;
+}
+
+.crop-action button {
+  padding: 6px 14px;
+  white-space: nowrap;
+}
+
+.dataset-source-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+}
+
+.field input,
+.field select {
+  min-width: 220px;
+}
+
+.workspace {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.image-column {
+  width: 220px;
+}
+
+.preview-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.preview-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.preview-header h3 {
+  margin: 0;
+}
+
+.preview-box {
+  width: 100%;
+  height: 300px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  color: var(--muted);
+}
+
+.preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.delete-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  color: var(--danger);
+}
+
+.delete-btn:hover {
+  opacity: 0.8;
+}
+
+.overwrite-toggle {
+  font-size: 14px;
+  color: var(--muted);
+}

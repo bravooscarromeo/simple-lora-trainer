@@ -2,6 +2,12 @@ from utils.ensure_fields import parse_int
 from pathlib import Path
 import re
 
+def set_optional(cfg: dict, key: str, value: str | None):
+    if value is None or not str(value).strip():
+        cfg.pop(key, None)
+    else:
+        cfg[key] = str(value).strip()
+
 def apply(form, config, issues):
     """
     Apply dataset-related settings from form to config.
@@ -35,13 +41,17 @@ def apply(form, config, issues):
 
     captions["first_word_memorize"] = "first_word_memorize" in form
 
-    if "prepend_token" in form:
-        val = form["prepend_token"].strip()
-        captions["prepend_token"] = val if val else None
+    set_optional(
+        captions,
+        "prepend_token",
+        form.get("prepend_token")
+    )
 
-    if "append_token" in form:
-        val = form["append_token"].strip()
-        captions["append_token"] = val if val else None
+    set_optional(
+        captions,
+        "append_token",
+        form.get("append_token")
+    )
 
     bucket = dataset["bucket"]
     bucket_enabled = "bucket_enabled" in form

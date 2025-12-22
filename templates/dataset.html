@@ -7,39 +7,39 @@
 <h1>Dataset Prep</h1>
 
 <div class="section">
-  <h2>Dataset Source</h2>
+<h2>Dataset Source</h2>
 
-  <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
-    <div>
-      <label>Project</label><br>
-      <select id="project-select"></select>
-    </div>
+<div class="dataset-source-row">
+<div class="field">
+<label>Project</label>
+<select id="project-select"></select>
+</div>
 
-    <div>
-      <label>Dataset path</label><br>
-      <input
-        id="dataset-path-input"
-        type="text"
-        placeholder="dataset"
-        style="min-width:220px"
-      />
-    </div>
+<div class="field">
+<label>Dataset path</label>
+<input
+id="dataset-path-input"
+type="text"
+placeholder="dataset"
+/>
+</div>
 
-    <button id="load-dataset-btn">Load</button>
-  </div>
+<button id="load-dataset-btn">Load</button>
+</div>
 
-  <div
-    id="dataset-error"
-    class="warning-box"
-    style="display:none; margin-top:12px;"
-  ></div>
+<div
+id="dataset-error"
+class="warning-box"
+style="display:none; margin-top:12px;"
+></div>
 </div>
 
 <div class="section">
   <h2>Workspace</h2>
 
-  <div style="display: flex; gap: 20px; align-items: flex-start;">
-    <div style="width: 220px;">
+  <div class="workspace">
+
+    <div class="image-column">
       <h3>Images</h3>
 
       <div class="images-pane">
@@ -47,32 +47,74 @@
           id="image-filter"
           type="text"
           placeholder="Filter images… (ex: 2858 or IMG_28)"
-          style="width:200px"
           autocomplete="off"
         />
 
         <ul id="image-list" class="image-list"></ul>
       </div>
-    </div>
 
-    <div style="flex: 1;">
-      <h3>Preview</h3>
+ <div style="margin-top:12px; position: relative;">
+  <label style="font-size:13px; color: var(--muted);">
+    Square crop size (px)
+  </label>
+
+  <div style="display:flex; gap:8px; margin-top:6px; align-items:center;">
+    <input
+      id="crop-size-input"
+      type="number"
+      value="512"
+      min="64"
+      step="64"
+      style="width:100px;"
+    />
+
+    <div style="position: relative;">
+      <button id="crop-btn">
+        Crop Images
+      </button>
 
       <div
-        id="image-preview"
+        id="autocrop-hint"
         style="
-          width: 100%;
-          height: 300px;
-          background: var(--bg);
+          position: absolute;
+          left: 50%;
+          top: 100%;
+          transform: translateX(-50%);
+          margin-top: 6px;
+          padding: 4px 8px;
+          font-size: 12px;
+          background: var(--panel);
           border: 1px solid var(--border);
-          border-radius: 8px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
+          border-radius: 6px;
           color: var(--muted);
-          margin-bottom: 12px;
+          opacity: 0;
+          pointer-events: none;
+          transition: opacity 0.2s ease;
+          white-space: nowrap;
+          z-index: 100;
         "
       >
+        Shift + Click → selected image only
+      </div>
+    </div>
+  </div>
+ </div>
+    </div>
+
+    <div class="preview-column">
+
+      <div class="preview-header">
+        <h3>Preview</h3>
+        <button
+          id="delete-image-btn"
+          title="Delete image"
+          class="delete-btn"
+        >
+          🗑
+        </button>
+      </div>
+
+      <div id="image-preview" class="preview-box">
         No image selected
       </div>
 
@@ -80,23 +122,53 @@
       <textarea
         id="caption-editor"
         rows="4"
-        style="width: 100%;"
         placeholder="Edit caption here..."
       ></textarea>
 
-      <div style="margin-top: 10px;">
+      <div class="preview-actions">
         <button id="save-captions-btn">Save Captions</button>
-        <label style="margin-left:6px; margin-right:6px">
-        <button id="autocaption-btn">Auto-caption (BLIP)</button>
-        </label>
-        <label style="margin-left:6px; margin-right:6px; font-size:14px;">
-          <input type="checkbox" id="autocaption-overwrite">
-          Overwrite existing captions
-        </label>
-      </div>
-    </div>
 
+        <div style="position: relative; display: inline-block;">
+          <button id="autocaption-btn">Auto-caption (BLIP)</button>
+
+          <div
+            id="autocaption-hint"
+            style="
+              position: absolute;
+              left: 100%;
+              top: 50%;
+              transform: translate(8px, -50%);
+              padding: 4px 8px;
+              font-size: 12px;
+              background: var(--panel);
+              border: 1px solid var(--border);
+              border-radius: 6px;
+              color: var(--muted);
+              opacity: 0;
+              pointer-events: none;
+              transition: opacity 0.2s ease;
+              white-space: nowrap;
+              z-index: 100;
+            "
+          >
+            Shift + Click → selected image only
+          </div>
+        </div>
+      </div>
+
+      <label class="overwrite-toggle">
+        <input type="checkbox" id="autocaption-overwrite">
+        Overwrite existing captions
+      </label>
+
+      <div
+        id="autocaption-status"
+        style="font-size:14px; color: var(--muted); margin-top:6px;"
+      ></div>
+
+    </div>
   </div>
+</div>
 </div>
 
 {% endblock %}

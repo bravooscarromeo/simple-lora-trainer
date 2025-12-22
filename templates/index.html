@@ -6,56 +6,56 @@
 <h1>LoRA Trainer</h1>
 
 <form method="get">
-    <label>Project:</label>
-    <select name="project" onchange="this.form.submit()">
-        <option value="">-- Select --</option>
-        {% for p in projects %}
-            <option value="{{ p }}" {% if p == selected %}selected{% endif %}>{{ p }}</option>
-        {% endfor %}
-    </select>
+<label>Project:</label>
+<select name="project" onchange="this.form.submit()">
+<option value="">-- Select --</option>
+{% for p in projects %}
+<option value="{{ p }}" {% if p == selected %}selected{% endif %}>{{ p }}</option>
+{% endfor %}
+</select>
 </form>
 
 <form method="post" action="{{ url_for('projects.create_project_route') }}" style="margin-top: 16px;">
-  <label>
-    New Project
-    <span class="tooltip"
-          data-tip="Creates a new LoRA project folder with default configuration.">
-      ⓘ
-    </span>
-  </label><br>
+<label>
+New Project
+<span class="tooltip"
+data-tip="Creates a new LoRA project folder with default configuration.">
+ⓘ
+</span>
+</label><br>
 
-  <input type="text"
-         name="project_name"
-         placeholder="Project name"
-         required>
+<input type="text"
+name="project_name"
+placeholder="Project name"
+required>
 
-  <button type="submit" style="margin-left: 8px;">
-    Create
-  </button>
+<button type="submit" style="margin-left: 8px;">
+Create
+</button>
 </form>
 
 {% if selected %}
 <div class="section danger-zone">
-  <div class="danger-title">Danger Zone</div>
+<div class="danger-title">Danger Zone</div>
 
-  <form method="post" action="{{ url_for('projects.delete_project_route') }}">
-    <input type="hidden" name="project_name" value="{{ selected }}">
+<form method="post" action="{{ url_for('projects.delete_project_route') }}">
+<input type="hidden" name="project_name" value="{{ selected }}">
 
-    <label>
-      Type <strong>{{ selected }}</strong> to delete this project
-      <span class="tooltip"
-            data-tip="This permanently deletes the project folder and config. This cannot be undone.">
-        ⓘ
-      </span>
-    </label><br>
+<label>
+Type <strong>{{ selected }}</strong> to delete this project
+<span class="tooltip"
+data-tip="This permanently deletes the project folder and config. This cannot be undone.">
+ⓘ
+</span>
+</label><br>
 
-    <input name="confirm_name" type="text" placeholder="Project name">
-    <br><br>
+<input name="confirm_name" type="text" placeholder="Project name">
+<br><br>
 
-    <button type="submit" class="danger">
-      Delete Project
-    </button>
-  </form>
+<button type="submit" class="danger">
+Delete Project
+</button>
+</form>
 </div>
 {% endif %}
 
@@ -81,43 +81,43 @@
 <h2>Model</h2>
 
 <label>
-  Architecture
-  <span class="tooltip"
-        data-tip="Select the base model this LoRA is trained for. SDXL requires more VRAM than SD 1.5.">
-    ⓘ
-  </span>
+Architecture
+<span class="tooltip"
+data-tip="Select the base model this LoRA is trained for. SDXL requires more VRAM than SD 1.5.">
+ⓘ
+</span>
 </label><br>
 
 <select name="model_architecture">
-  <option value="sdxl"
-    {% if model.get('architecture', 'sdxl') == "sdxl" %}selected{% endif %}>
-    SDXL
-  </option>
-  <option value="sd15"
-    {% if model.get('architecture') == "sd15" %}selected{% endif %}>
-    SD 1.5
-  </option>
+<option value="sdxl"
+{% if model.get('architecture', 'sdxl') == "sdxl" %}selected{% endif %}>
+SDXL
+</option>
+<option value="sd15"
+{% if model.get('architecture') == "sd15" %}selected{% endif %}>
+SD 1.5
+</option>
 </select>
 
 <br><br>
 
 <label>
-  Base Model
-  <span class="tooltip"
-        data-tip="Select a base model from the models folder. Leave empty to use the default.">
-    ⓘ
-  </span>
+Base Model
+<span class="tooltip"
+data-tip="Select a base model from the models folder. Leave empty to use the default.">
+ⓘ
+</span>
 </label><br>
 
 <select name="model_checkpoint">
-  <option value="">-- use default --</option>
+<option value="">-- use default --</option>
 
-  {% for m in available_models %}
-    <option value="{{ m }}"
-      {% if model.get('checkpoint') == m %}selected{% endif %}>
-      {{ m }}
-    </option>
-  {% endfor %}
+{% for m in available_models %}
+<option value="{{ m }}"
+{% if model.get('checkpoint') == m %}selected{% endif %}>
+{{ m }}
+</option>
+{% endfor %}
 </select>
 
 <!-- ===================== DATASET ===================== -->
@@ -130,48 +130,48 @@
 <br><br>
 
 <label>
-  Resolution
-  <span class="tooltip"
-        data-tip="Images are automatically resized during training. 
-        Mixed image sizes will not cause errors, but inconsistent framing may reduce training result quality. 
-        For best results, use similarly framed images or crop your dataset before training.">
-    ⓘ
-  </span>
+Resolution
+<span class="tooltip"
+data-tip="Images are automatically resized during training. 
+Mixed image sizes will not cause errors, but inconsistent framing may reduce training result quality. 
+For best results, use similarly framed images or crop your dataset before training.">
+ⓘ
+</span>
 </label><br>
 <input name="resolution" type="number" value="{{ dataset.get('resolution','') }}">
 <br><br>
 
 <label>Repeats</label><br>
 <input
-  type="number"
-  id="repeats"
-  name="repeats"
-  min="1"
-  value="{{ config.dataset.repeats }}"
+type="number"
+id="repeats"
+name="repeats"
+min="1"
+value="{{ config.dataset.repeats }}"
 >
 <br><br>
 
 <label>
-  Batch Size
-  <span class="tooltip"
-        data-tip="Number of images processed per training step. Higher values use more VRAM.">
-    ⓘ
-  </span>
+Batch Size
+<span class="tooltip"
+data-tip="Number of images processed per training step. Higher values use more VRAM.">
+ⓘ
+</span>
 </label><br>
 <input name="batch_size" type="number"
-       value="{{ dataset.get('batch_size','') }}"
-       class="{% if 'batch_size' in danger_fields %}danger{% endif %}">
+value="{{ dataset.get('batch_size','') }}"
+class="{% if 'batch_size' in danger_fields %}danger{% endif %}">
 <br><br>
 
 <label>
-  <input type="checkbox" name="shuffle" {% if dataset.get('shuffle') %}checked{% endif %}>
-  Shuffle Dataset
+<input type="checkbox" name="shuffle" {% if dataset.get('shuffle') %}checked{% endif %}>
+Shuffle Dataset
 </label>
 <br><br>
 
 <label>
-  <input type="checkbox" name="cache_latents" {% if dataset.get('cache_latents') %}checked{% endif %}>
-  Cache Latents
+<input type="checkbox" name="cache_latents" {% if dataset.get('cache_latents') %}checked{% endif %}>
+Cache Latents
 </label>
 
 <hr>
@@ -183,44 +183,44 @@
 <br><br>
 
 <label>
-  <input type="checkbox" name="first_word_memorize"
-         {% if captions.get('first_word_memorize') %}checked{% endif %}>
-  Memorize First Caption Word
+<input type="checkbox" name="first_word_memorize"
+{% if captions.get('first_word_memorize') %}checked{% endif %}>
+Memorize First Caption Word
 </label>
 <br><br>
 
 <label>
-  Prepend Token
-  <span class="tooltip" data-tip="
+Prepend Token
+<span class="tooltip" data-tip="
 Token added to the beginning of every caption.
 Often used as a trigger word for the LoRA.
 Example: <my_character>
 *Currently Unsupported*
 ">ⓘ</span>
 </label><br>
-<input name="prepend_token" type="text" value="{{ captions.get('prepend_token','') }}">
+<input name="prepend_token" type="text" placeholder="None" value="{{ captions.get('prepend_token','') }}">
 <br><br>
 
 <label>
-  Append Token
-  <span class="tooltip" data-tip="
+Append Token
+<span class="tooltip" data-tip="
 Token added to the end of every caption.
 Useful for enforcing styles or modifiers.
 Less commonly used than prepend tokens.
 *Currently Unsupported*
 ">ⓘ</span>
 </label><br>
-<input name="append_token" type="text" value="{{ captions.get('append_token','') }}">
+<input name="append_token" type="text" placeholder="None" value="{{ captions.get('append_token','') }}">
 
 <hr>
 
 <h3>Bucketing</h3>
 
 <label>
-  <input type="checkbox" name="bucket_enabled"
-         {% if bucket.get('enabled') %}checked{% endif %}>
-  Enable Bucketing
-  <span class="tooltip" data-tip="
+<input type="checkbox" name="bucket_enabled"
+{% if bucket.get('enabled') %}checked{% endif %}>
+Enable Bucketing
+<span class="tooltip" data-tip="
 Groups images by similar resolutions.
 Reduces distortion for mixed-resolution datasets.
 Does not upscale images.
@@ -237,8 +237,8 @@ Does not upscale images.
 <br><br>
 
 <label>
-  Step
-  <span class="tooltip" data-tip="
+Step
+<span class="tooltip" data-tip="
 Resolution step size used for bucketing.
 Common values: 32 or 64.
 Smaller values increase flexibility but cost more VRAM.
@@ -255,95 +255,95 @@ Smaller values increase flexibility but cost more VRAM.
 <h2>Training</h2>
 
 <label>
-  Epochs
-  <span class="tooltip"
-        data-tip="Number of full passes over the dataset. More epochs increase training time and risk of overfitting.">
-    ⓘ
-  </span>
+Epochs
+<span class="tooltip"
+data-tip="Number of full passes over the dataset. More epochs increase training time and risk of overfitting.">
+ⓘ
+</span>
 </label><br>
 <input name="epochs" type="number"
-       value="{{ training.get('epochs','') }}"
-       class="{% if 'epochs' in danger_fields %}danger{% endif %}">
+value="{{ training.get('epochs','') }}"
+class="{% if 'epochs' in danger_fields %}danger{% endif %}">
 <br><br>
 
 <label>
-  Save Every N Epochs
-  <span class="tooltip"
-        data-tip="Controls how often checkpoints are saved during training. Example: 1 saves every epoch, 5 saves every 5 epochs.">
-    ⓘ
-  </span>
+Save Every N Epochs
+<span class="tooltip"
+data-tip="Controls how often checkpoints are saved during training. Example: 1 saves every epoch, 5 saves every 5 epochs.">
+ⓘ
+</span>
 </label><br>
 
 <input
-  name="save_every_epochs"
-  type="number"
-  min="1"
-  value="{{ training.get('save_every_epochs', 1) }}"
+name="save_every_epochs"
+type="number"
+min="1"
+value="{{ training.get('save_every_epochs', 1) }}"
 >
 <br><br>
 
 <label>
-  Run inference previews
+Run inference previews
 </label><br>
 <input type="checkbox" name="do_inference"
-       {% if training.get("do_inference") %}checked{% endif %}>
+{% if training.get("do_inference") %}checked{% endif %}>
 <br><br>
 
 <label>
-  Gradient Accumulation
-  <span class="tooltip" data-tip="
+Gradient Accumulation
+<span class="tooltip" data-tip="
 Simulates a larger batch size by accumulating gradients across steps.
 Batch Size 1 + Accumulation 4 = Effective batch size 4.
 Reduces VRAM usage but slows training.
 ">ⓘ</span>
 </label><br>
 <input name="gradient_accumulation" type="number"
-       value="{{ training.get('gradient_accumulation','') }}">
+value="{{ training.get('gradient_accumulation','') }}">
 <br><br>
 
 <label>
-  CLIP Skip
-  <span class="tooltip"
-        data-tip="Skips early CLIP layers. Higher values reduce literal prompt matching and can weaken concept learning.">
-    ⓘ
-  </span>
+CLIP Skip
+<span class="tooltip"
+data-tip="Skips early CLIP layers. Higher values reduce literal prompt matching and can weaken concept learning.">
+ⓘ
+</span>
 </label><br>
 <input name="clip_skip" type="number"
-       value="{{ cond.get('clip_skip','') }}">
+value="{{ cond.get('clip_skip','') }}">
 <br><br>
 
 <h3>Learning Rates</h3>
 
 <label>
-  UNet LR
-  <span class="tooltip"
-        data-tip="Learning rate for UNet weights. Typical range is 1e-5 to 5e-5. Too high can destroy training.
-        
-        If training loss becomes NaN, the run is invalid and will not recover.
+UNet LR
+<span class="tooltip"
+data-tip="Learning rate for UNet weights. Typical range is 1e-5 to 5e-5. Too high can destroy training.
+
+If training loss becomes NaN, the run is invalid and will not recover.
 Common causes:
 - Learning rate too high
 - Mixed precision instability (fp16 / bf16)
 
 Fix by lowering LR or changing precision.
 ">
-    ⓘ
-  </span>
+ⓘ
+</span>
 </label><br>
 <input name="lr_unet" type="text"
-       value="{{ lrs.get('unet','') }}"
-       class="{% if 'lr_unet' in danger_fields %}danger{% endif %}">
+value="{{ lrs.get('unet','') }}"
+class="{% if 'lr_unet' in danger_fields %}danger{% endif %}">
 <br><br>
 
 <label>
-  CLIP LR
-  <span class="tooltip"
-        data-tip="Learning rate for CLIP text encoder. Usually equal to or lower than UNet LR. Higher values can harm prompt understanding.">
-    ⓘ
-  </span>
+CLIP LR
+<span class="tooltip"
+data-tip="Learning rate for CLIP text encoder. Usually equal to or lower than UNet LR. Higher values can harm prompt understanding.">
+ⓘ
+</span>
 </label><br>
 <input name="lr_clip" type="text"
-       value="{{ lrs.get('clip','') }}"
-       class="{% if 'lr_clip' in danger_fields %}danger{% endif %}">
+value="{{ lrs.get('clip','') }}"
+class="{% if 'lr_clip' in danger_fields %}danger{% endif %}">
 <br><br>
 
 <hr>
@@ -355,11 +355,11 @@ Fix by lowering LR or changing precision.
 <h2>LoRA</h2>
 
 <label>
-  Rank
-  <span class="tooltip"
-        data-tip="Controls LoRA capacity. Higher values increase file size and training time. Common values are 8, 16, 32, or 64.">
-    ⓘ
-  </span>
+Rank
+<span class="tooltip"
+data-tip="Controls LoRA capacity. Higher values increase file size and training time. Common values are 8, 16, 32, or 64.">
+ⓘ
+</span>
 </label><br>
 <input name="lora_rank" type="number" value="{{ lora.get('rank','') }}">
 <br><br>
@@ -369,8 +369,8 @@ Fix by lowering LR or changing precision.
 <br><br>
 
 <label>
-  Dropout
-  <span class="tooltip" data-tip="
+Dropout
+<span class="tooltip" data-tip="
 Randomly disables a portion of LoRA weights during training.
 Helps reduce overfitting on small datasets.
 Most LoRA training uses 0.0.
@@ -380,8 +380,8 @@ Most LoRA training uses 0.0.
 <br><br>
 
 <label>
-  Target Modules
-  <span class="tooltip" data-tip="
+Target Modules
+<span class="tooltip" data-tip="
 Specifies which layers LoRA is applied to.
 Leaving this empty uses recommended defaults.
 Advanced option — usually unnecessary.
@@ -401,16 +401,16 @@ Advanced option — usually unnecessary.
 <label>Mixed Precision</label><br>
 <select name="mixed_precision">
 {% for opt in ["fp16","bf16","fp32"] %}
-  <option value="{{ opt }}" {% if precision.get('mixed_precision') == opt %}selected{% endif %}>{{ opt }}</option>
+<option value="{{ opt }}" {% if precision.get('mixed_precision') == opt %}selected{% endif %}>{{ opt }}</option>
 {% endfor %}
 </select>
 <br><br>
 
 <label>
-  <input type="checkbox" name="gradient_checkpointing"
-         {% if precision.get('gradient_checkpointing') %}checked{% endif %}>
-  Gradient Checkpointing
-  <span class="tooltip" data-tip="
+<input type="checkbox" name="gradient_checkpointing"
+{% if precision.get('gradient_checkpointing') %}checked{% endif %}>
+Gradient Checkpointing
+<span class="tooltip" data-tip="
 Reduces VRAM usage by recomputing activations.
 Slows training but greatly lowers memory usage.
 Does not affect final quality.
@@ -419,16 +419,16 @@ Does not affect final quality.
 <br><br>
 
 <label>
-  <input type="checkbox" name="xformers"
-         {% if precision.get('xformers') %}checked{% endif %}>
-  Use xFormers
+<input type="checkbox" name="xformers"
+{% if precision.get('xformers') %}checked{% endif %}>
+Use xFormers
 </label>
 <br><br>
 
 <label>
-  <input type="checkbox" name="cpu_offload"
-         {% if precision.get('cpu_offload') %}checked{% endif %}>
-  CPU Offload
+<input type="checkbox" name="cpu_offload"
+{% if precision.get('cpu_offload') %}checked{% endif %}>
+CPU Offload
 </label>
 
 <hr>
@@ -442,63 +442,63 @@ Does not affect final quality.
 <label>Optimizer Type</label><br>
 <select name="optimizer_type">
 {% for opt in ["adamw","adam","sgd"] %}
-  <option value="{{ opt }}" {% if optimizer.get('type') == opt %}selected{% endif %}>{{ opt }}</option>
+<option value="{{ opt }}" {% if optimizer.get('type') == opt %}selected{% endif %}>{{ opt }}</option>
 {% endfor %}
 </select>
 <br><br>
 
 <label>
-  Weight Decay
-  <span class="tooltip" data-tip="
+Weight Decay
+<span class="tooltip" data-tip="
 Penalizes large weights to reduce overfitting.
 
 Acts like regularization — higher values encourage simpler models but can weaken learning.
 Typical values are 0.0 – 0.1.
 
 Most LoRA training works fine with 0 or very small values.
-  ">ⓘ</span>
+">ⓘ</span>
 </label><br>
 <input name="weight_decay" type="text" value="{{ optimizer.get('weight_decay','') }}">
 <br><br>
 
 <label>
-  Beta 1
-  <span class="tooltip" data-tip="
+Beta 1
+<span class="tooltip" data-tip="
 Controls how much the optimizer remembers recent gradients.
 
 Higher values smooth training but react slower to changes.
 Typical value: 0.9.
 
 Rarely needs adjustment for LoRA training.
-  ">ⓘ</span>
+">ⓘ</span>
 </label><br>
 <input name="beta1" type="text" value="{{ betas[0] if betas|length > 0 else '' }}">
 <br><br>
 
 <label>
-  Beta 2
-  <span class="tooltip" data-tip="
+Beta 2
+<span class="tooltip" data-tip="
 Controls how much the optimizer remembers long-term gradient variance.
 
 Higher values make training more stable but slower to adapt.
 Typical value: 0.999.
 
 Usually safe to leave at default.
-  ">ⓘ</span>
+">ⓘ</span>
 </label><br>
 <input name="beta2" type="text" value="{{ betas[1] if betas|length > 1 else '' }}">
 <br><br>
 
 <label>
-  Epsilon
-  <span class="tooltip" data-tip="
+Epsilon
+<span class="tooltip" data-tip="
 Small value added for numerical stability.
 
 Prevents division by zero inside the optimizer.
 Typical values are 1e-8 to 1e-6.
 
 Changing this rarely improves results.
-  ">ⓘ</span>
+">ⓘ</span>
 </label><br>
 <input name="epsilon" type="text" value="{{ optimizer.get('epsilon','') }}">
 
@@ -511,8 +511,8 @@ Changing this rarely improves results.
 <h2>Scheduler</h2>
 
 <label>
-  Scheduler Type
-  <span class="tooltip" data-tip="
+Scheduler Type
+<span class="tooltip" data-tip="
 Controls how learning rate changes during training.
 cosine: smooth decay - 
 linear: steady decay - 
@@ -521,7 +521,7 @@ constant: no decay
 </label><br>
 <select name="scheduler_type">
 {% for opt in ["cosine","linear","constant"] %}
-  <option value="{{ opt }}" {% if scheduler.get('type') == opt %}selected{% endif %}>{{ opt }}</option>
+<option value="{{ opt }}" {% if scheduler.get('type') == opt %}selected{% endif %}>{{ opt }}</option>
 {% endfor %}
 </select>
 <br><br>
@@ -531,8 +531,8 @@ constant: no decay
 <br><br>
 
 <label>
-  Num Cycles
-  <span class="tooltip" data-tip="
+Num Cycles
+<span class="tooltip" data-tip="
 Used by some schedulers (e.g. cosine).
 Controls how many LR cycles occur.
 Most setups use 1.
@@ -546,21 +546,21 @@ Most setups use 1.
 <!-- ===================== TRAINING ===================== -->
 
 <div class="section">
-  <h2>Training</h2>
+<h2>Training</h2>
 
-  <p style="color: var(--muted); margin-bottom: 12px;">
-    Uses the current configuration to start LoRA training.
-  </p>
+<p style="color: var(--muted); margin-bottom: 12px;">
+Uses the current configuration to start LoRA training.
+</p>
 
-  <button
-      type="submit"
-      name="action"
-      value="train"
-      class="train-button"
-      formaction="{{ url_for('training.start_training', project=selected) }}"
-      {% if has_fatal %}disabled{% endif %}>
-      Start Training
-  </button>
+<button
+type="submit"
+name="action"
+value="train"
+class="train-button"
+formaction="{{ url_for('training.start_training', project=selected) }}"
+{% if has_fatal %}disabled{% endif %}>
+Start Training
+</button>
 
 </div>
 
@@ -568,22 +568,22 @@ Most setups use 1.
 
 {% if training_status == "running" %}
 <div class="section">
-  <h2>Training Logs</h2>
-  
-  <p style="color: var(--muted);">
-    Training is currently running.
-  </p>
+<h2>Training Logs</h2>
 
-  <pre id="log-box" style="max-height: 300px; overflow-y: auto;"></pre>
+<p style="color: var(--muted);">
+Training is currently running.
+</p>
 
-  <button
-      type="submit"
-      name="action"
-      value="stop"
-      class="stop-button"
-      formaction="{{ url_for('training.stop_training', project=selected) }}">
-      Stop Training
-  </button>
+<pre id="log-box" style="max-height: 300px; overflow-y: auto;"></pre>
+
+<button
+type="submit"
+name="action"
+value="stop"
+class="stop-button"
+formaction="{{ url_for('training.stop_training', project=selected) }}">
+Stop Training
+</button>
 
 </div>
 
@@ -591,11 +591,11 @@ Most setups use 1.
 
 <script>
 async function fetchLogs() {
-  const res = await fetch("/train_logs/{{ selected }}");
-  const data = await res.json();
-  const box = document.getElementById("log-box");
-  box.textContent = data.logs;
-  box.scrollTop = box.scrollHeight;
+const res = await fetch("/train_logs/{{ selected }}");
+const data = await res.json();
+const box = document.getElementById("log-box");
+box.textContent = data.logs;
+box.scrollTop = box.scrollHeight;
 }
 
 fetchLogs();
@@ -610,24 +610,24 @@ setInterval(fetchLogs, 2000);
 <!-- ===================== SAVE ===================== -->
 
 {% if issues %}
-  <div class="warning-box">
-    {% for i in issues %}
-      <div>{{ i.message }}</div>
-    {% endfor %}
-  </div>
+<div class="warning-box">
+{% for i in issues %}
+<div>{{ i.message }}</div>
+{% endfor %}
+</div>
 {% endif %}
 
 {% if has_fatal %}
-  {# Fatal error: cannot proceed, only allow Save so user can correct config #}
-  <button type="submit">Save</button>
+{# Fatal error: cannot proceed, only allow Save so user can correct config #}
+<button type="submit">Save</button>
 
 {% elif has_danger %}
-  {# Risky but allowed: user may proceed #}
-  <button name="confirm" value="yes">Proceed Anyway</button>
-  <button type="submit">Cancel</button>
+{# Risky but allowed: user may proceed #}
+<button name="confirm" value="yes">Proceed Anyway</button>
+<button type="submit">Cancel</button>
 
 {% else %}
-  <button type="submit">Save</button>
+<button type="submit">Save</button>
 {% endif %}
 
 {% endif %}
