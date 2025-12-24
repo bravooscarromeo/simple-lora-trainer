@@ -17,7 +17,7 @@ System Requirements:
 ----------------------------
 Installation:
 ###
-1) git clone https://github.com/BurninWeeknd/simple-lora-trainer.git
+1) git clone https://github.com/BurninWeeknd/simple-lora-trainer.git // Or download zip
 2) cd path/to/simple-lora-trainer
 3) pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cuNNN (Specify version in for NNN) (Must be compatible with Toolkit version)
 4) pip install -r requirements.txt
