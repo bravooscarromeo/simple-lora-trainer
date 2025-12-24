@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 import torch
 from .config import TrainConfig, log
-from .data import image_transform
 
 @dataclass
 class TrainState:
@@ -18,6 +17,7 @@ def train_epochs(
     lr_scheduler,
     trainable_params,
     on_epoch_end=None,
+    timer=None
 ):
     if cfg.grad_accum_steps < 1:
         raise ValueError("grad_accum_steps must be >= 1")
@@ -49,9 +49,28 @@ def train_epochs(
                     optimizer.zero_grad(set_to_none=True)
                     state.opt_step += 1
 
+                    eta = timer.update(state.opt_step) if timer else None
+
                     if state.opt_step % cfg.log_every == 0:
-                        lr = lr_scheduler.get_last_lr()[0] if hasattr(lr_scheduler, "get_last_lr") else optimizer.param_groups[0]["lr"]
-                        log(f"TRAIN epoch={epoch} opt_step={state.opt_step} lr={lr:.8f} loss={loss.item():.6f}")
+                        lr = (
+                            lr_scheduler.get_last_lr()[0]
+                            if hasattr(lr_scheduler, "get_last_lr")
+                            else optimizer.param_groups[0]["lr"]
+                        )
+
+                        msg = (
+                            f"TRAIN epoch={epoch} "
+                            f"opt_step={state.opt_step} "
+                            f"lr={lr:.8f} "
+                            f"loss={loss.item():.6f}"
+                        )
+
+                        if eta is not None:
+                            mins = int(eta // 60)
+                            secs = int(eta % 60)
+                            msg += f" eta={mins:02d}:{secs:02d}"
+
+                        log(msg)
 
         if on_epoch_end is not None:
             on_epoch_end(epoch, state)

@@ -4,12 +4,13 @@ from pathlib import Path
 from train.config import build_arg_parser, cfg_from_args, log, resolve_dtype, log_train_config
 from train.data import build_dataset_buckets_and_tags, build_latent_cache
 from train.meta import build_lora_metadata
-from train.lora import DEFAULT_TARGET_MODULES, DEFAULT_TE_TARGET_MODULES, inject_lora, lora_parameters, set_lora_scale, save_lora
+from train.lora import DEFAULT_TARGET_MODULES, DEFAULT_TE_TARGET_MODULES, inject_lora, set_lora_scale, save_lora
 from train.optim import build_optimizer, build_scheduler
 from train.loop import train_epochs
 from train.sd.models import load_sd_models
 from train.sd.step import SDTrainStep
 from train.sd.inference import run_inference_preview_in_memory
+from train.time import ETATimer
 
 def train(cfg):
     torch.manual_seed(cfg.seed)
@@ -29,6 +30,14 @@ def train(cfg):
         raise RuntimeError("train_lora_v1.py currently supports only --model_type sd (SD 1.x)")
 
     dataset, bucket_map, tag_counter, trained_words = build_dataset_buckets_and_tags(cfg)
+    steps_per_epoch = sum(
+        (len(ids) + cfg.batch_size - 1) // cfg.batch_size
+        for ids in bucket_map.values()
+    )
+    updates_per_epoch = (steps_per_epoch + cfg.grad_accum_steps - 1) // cfg.grad_accum_steps
+    total_opt_steps = updates_per_epoch * cfg.epochs
+
+    timer = ETATimer(total_steps=total_opt_steps)
 
     log("STATUS loading_models")
     tokenizer, text_encoder, vae, unet, scheduler = load_sd_models(cfg, device, dtype)
@@ -167,6 +176,7 @@ def train(cfg):
         lr_scheduler=lr_scheduler,
         trainable_params=trainable_params,
         on_epoch_end=on_epoch_end,
+        timer=timer,
     )
 
     final_out = output_dir / f"{base_name}_final.safetensors"
