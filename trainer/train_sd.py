@@ -1,16 +1,25 @@
-import torch
+import sys
 from pathlib import Path
 
-from train.config import build_arg_parser, cfg_from_args, log, resolve_dtype, log_train_config
-from train.data import build_dataset_buckets_and_tags, build_latent_cache
-from train.meta import build_lora_metadata
-from train.lora import DEFAULT_TARGET_MODULES, DEFAULT_TE_TARGET_MODULES, inject_lora, set_lora_scale, save_lora
-from train.optim import build_optimizer, build_scheduler
-from train.loop import train_epochs
-from train.sd.models import load_sd_models
-from train.sd.step import SDTrainStep
-from train.sd.inference import run_inference_preview_in_memory
-from train.time import ETATimer
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from utils.hf_cache import setup_hf_env
+setup_hf_env()
+
+import torch
+from trainer.train.config import build_arg_parser, cfg_from_args, log, resolve_dtype, log_train_config
+from trainer.train.data import build_dataset_buckets_and_tags, build_latent_cache
+from trainer.train.meta import build_lora_metadata
+from trainer.train.lora import DEFAULT_TARGET_MODULES, DEFAULT_TE_TARGET_MODULES, inject_lora, set_lora_scale, save_lora
+from trainer.train.optim import build_optimizer, build_scheduler
+from trainer.train.loop import train_epochs
+from trainer.train.sd.models import load_sd_models
+from trainer.train.sd.step import SDTrainStep
+from trainer.train.sd.inference import run_inference_preview_in_memory
+from trainer.train.time import ETATimer
+from utils.ensure_models import ensure_base_model_available
 
 def train(cfg):
     torch.manual_seed(cfg.seed)
@@ -19,7 +28,8 @@ def train(cfg):
 
     log(f"STATUS device={device.type} dtype={dtype}")
     log_train_config(cfg)
-
+    ensure_base_model_available(cfg.base_model)
+    
     if cfg.cpu_offload and not cfg.cache_latents:
         raise RuntimeError(
             "cpu_offload=True currently requires cache_latents=True "
