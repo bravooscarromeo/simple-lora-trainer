@@ -68,17 +68,3 @@ def apply(form, config, issues):
             bucket["max_res"] = max_res
         if step is not None:
             bucket["step"] = step
-
-    resolution = dataset.get("resolution")
-    model_arch = config.get("model", {}).get("architecture", "sdxl")
-
-    if model_arch == "sd15" and resolution and resolution > 768:
-        issues.append({
-            "field": "resolution",
-            "level": "fatal",
-            "message": (
-                "Resolution is too high for SD 1.5.\n"
-                "SD 1.5 supports up to 768 resolution.\n\n"
-                "Fix: lower resolution or switch to SDXL."
-            )
-        })
