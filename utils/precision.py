@@ -5,6 +5,7 @@ def apply(form, config, issues):
     Appends validation issues.
     """
     precision = config.setdefault("precision", {})
+    dataset = config.setdefault("dataset", {})
 
     precision["mixed_precision"] = form.get("mixed_precision", "fp16")
 
@@ -24,3 +25,13 @@ def apply(form, config, issues):
                     "Disable xFormers or install it before training."
                 )
             })
+
+    if precision.get("cpu_offload") and not dataset.get("cache_latents"):
+        issues.append({
+            "field": "cpu_offload",
+            "level": "fatal",
+            "message": (
+                "CPU offload requires cached latents. "
+                "Enable 'Cache Latents' or disable CPU offload."
+            )
+        })
