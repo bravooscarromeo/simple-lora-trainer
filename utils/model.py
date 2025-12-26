@@ -7,7 +7,7 @@ def apply(form, config, issues):
     if arch not in ("sdxl", "sd15"):
         issues.append({
             "field": "model_architecture",
-            "level": "danger",
+            "level": "fatal",
             "message": "Unsupported model architecture."
         })
     else:

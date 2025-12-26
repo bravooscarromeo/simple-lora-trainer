@@ -23,32 +23,37 @@ def index():
     projects = [p.name for p in PROJECTS_DIR.iterdir() if p.is_dir()]
     selected = request.values.get("project")
 
-    issues = []
-    danger_fields = []
+    issues: list[dict] = []
 
-    session_issues = session.pop("ui_issues", [])
-    issues.extend(session_issues)
+    issues.extend(session.pop("ui_issues", []))
 
     config = load_config(selected) if selected else None
 
     REQUIRED_TOP_LEVEL = {
         "dataset", "training", "lora",
         "optimizer", "scheduler",
-        "precision", "output"
+        "precision", "output",
     }
 
+    def has_fatal():
+        return any(i["level"] == "fatal" for i in issues)
+
+    def has_warn():
+        return any(i["level"] == "warn" for i in issues)
+
     if request.method == "POST" and config:
+        action = request.form.get("action")
+
+        issues.clear()
+
         missing = REQUIRED_TOP_LEVEL - set(config.keys())
         if missing:
             issues.append({
                 "field": "__global__",
                 "level": "fatal",
-                "message": f"Config missing sections: {', '.join(sorted(missing))}"
+                "message": f"Config missing sections: {', '.join(sorted(missing))}",
             })
         else:
-            issues.clear()
-            danger_fields.clear()
-
             dataset.apply(request.form, config, issues)
             model.apply(request.form, config, issues)
             training.apply(request.form, config, issues)
@@ -56,20 +61,40 @@ def index():
             precision.apply(request.form, config, issues)
             optimizer.apply(request.form, config, issues)
 
-            issues += analyze_training_risk(config["training"])
-            danger_fields = [i["field"] for i in issues if i["level"] == "danger"]
+            issues.extend(analyze_training_risk(config["training"]))
 
-            save_config(selected, config)
+        if action == "cancel":
+            issues.clear()
+            config = load_config(selected)
 
-            if request.form.get("action") == "train" and not danger_fields:
-                return redirect(url_for("training.start_training", project=selected))
+        elif action == "proceed":
+            if not has_fatal():
+                save_config(selected, config)
+                issues.clear()
 
-    available_models = sorted(p.name for p in MODELS_DIR.glob("*.safetensors"))
+        elif action == "save":
+            if not has_fatal() and not has_warn():
+                save_config(selected, config)
+                issues.clear()
+
+        elif action == "train":
+            if not has_fatal():
+                save_config(selected, config)
+                issues.clear()
+                return redirect(
+                    url_for("training.start_training", project=selected)
+                )
+
+        if issues:
+            session["ui_issues"] = issues.copy()
 
     training_status = "idle"
-    pid_file = project_dir(selected) / "training.pid" if selected else None
-    if pid_file and pid_file.exists():
-        training_status = "running"
+    if selected:
+        pid_file = project_dir(selected) / "training.pid"
+        if pid_file.exists():
+            training_status = "running"
+
+    available_models = sorted(p.name for p in MODELS_DIR.glob("*.safetensors"))
 
     return render_template(
         "index.html",
@@ -77,10 +102,10 @@ def index():
         selected=selected,
         config=config,
         issues=issues,
-        danger_fields=danger_fields,
         training_status=training_status,
         available_models=available_models,
     )
+
 
 @ui_training_bp.route("/vram")
 def vram_status():

@@ -612,32 +612,40 @@ setInterval(fetchLogs, 2000);
 </script>
 {% endif %}
 
-{% set fatal_issues = issues | selectattr("level", "equalto", "fatal") | list %}
-{% set has_fatal = fatal_issues | length > 0 %}
-{% set has_danger = danger_fields | length > 0 %}
+{% set has_fatal = issues | selectattr("level", "equalto", "fatal") | list | length > 0 %}
+{% set has_warn  = issues | selectattr("level", "equalto", "warn")  | list | length > 0 %}
 
-<!-- ===================== SAVE ===================== -->
+<!-- ===================== ISSUES ===================== -->
 
 {% if issues %}
 <div class="warning-box">
-{% for i in issues %}
-<div>{{ i.message }}</div>
-{% endfor %}
+  {% for i in issues %}
+  <div class="{{ i.level }}">{{ i.message }}</div>
+  {% endfor %}
 </div>
 {% endif %}
 
-{% if has_fatal %}
-{# Fatal error: cannot proceed, only allow Save so user can correct config #}
-<button type="submit">Save</button>
+<!-- ===================== ACTION BUTTONS ===================== -->
 
-{% elif has_danger %}
-{# Risky but allowed: user may proceed #}
-<button name="confirm" value="yes">Proceed Anyway</button>
-<button type="submit">Cancel</button>
+{% if has_fatal %}
+  {# Fatal: never save, only allow cancel #}
+  <button type="submit" name="action" value="cancel" class="danger">
+    Cancel
+  </button>
+
+{% elif has_warn %}
+  {# Warn: explicit consent required #}
+  <button type="submit" name="action" value="proceed" class="warning">
+    Proceed Anyway
+  </button>
 
 {% else %}
-<button type="submit">Save</button>
+  {# Clean: normal save #}
+  <button type="submit" name="action" value="save">
+    Save
+  </button>
 {% endif %}
+
 
 {% endif %}
 {% endblock %}
